@@ -1,6 +1,6 @@
-# TusCore Fleet Manager (Phase 1)
+# TusCore Fleet Manager (Phase 2)
 
-Digital twin of a 60x40 warehouse with 12 robots (4 types / 4 vendors). Phase 1: grid sim, A* planning, live browser view.
+Digital twin of a 60x40 warehouse with 12 robots (4 types / 4 vendors). Phases 1-2: grid sim, A* planning, orders, capability-based allocation (greedy / Hungarian), live console.
 
 ## Run (Windows PowerShell)
 ```powershell
@@ -12,11 +12,20 @@ uvicorn app.main:app --reload
 ```
 Open http://localhost:8000 (API docs: http://localhost:8000/docs).
 
+## Headless shift run (no browser)
+```powershell
+cd D:\robotics\tuscore\backend
+python scripts/run_shift.py --allocator greedy
+python scripts/run_shift.py --allocator hungarian
+```
+
 ## Layout
 - `config/warehouse.yaml` - map, zones, robot types (edit this, no code changes)
 - `backend/app/grid.py` - map + blocked cells
 - `backend/app/planner.py` - A*
 - `backend/app/robots.py` - common robot model + movement
+- `backend/app/tasks.py`, `orders.py` - order model, generator, Poisson arrivals
+- `backend/app/allocator.py` - greedy and Hungarian allocation
 - `backend/app/sim.py` - simulation loop, goto, snapshot
 - `backend/app/main.py` - FastAPI REST + WebSocket
 - `frontend/index.html` - TusCore Fleet Console (canvas)

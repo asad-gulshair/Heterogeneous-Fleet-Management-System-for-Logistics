@@ -35,7 +35,7 @@ header{flex:none;display:flex;align-items:center;gap:18px;padding:0 20px;height:
 .seg button:hover:not(.on){color:var(--text);background:var(--s2)}
 /* layout */
 .page{flex:1;display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:14px;padding:14px 20px;align-items:start}
-.kpis{grid-column:1/-1;display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+.kpis{grid-column:1/-1;display:grid;grid-template-columns:repeat(5,1fr);gap:14px}
 .kpi{background:linear-gradient(180deg,var(--s1),#0a1b40);border:1px solid var(--line);border-radius:10px;padding:12px 14px;position:relative;overflow:hidden}
 .kpi::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--c,var(--cyan))}
 .kpi label{display:block;color:var(--muted);font-size:11px;letter-spacing:1.2px;text-transform:uppercase}
@@ -81,6 +81,19 @@ canvas{display:block;margin:0 auto;border-radius:6px;cursor:crosshair}
 .badge{font-size:10px;border:1px solid var(--line2);border-radius:5px;padding:1px 6px;color:var(--cyan2);letter-spacing:.8px}
 footer{display:flex;justify-content:space-between;padding:10px 20px;color:var(--dim);font-size:11px;border-top:1px solid var(--line)}
 footer b{color:var(--cyan2);font-weight:600}
+.chip.working{background:#5a4310;color:#f5c76a}.chip.waiting{background:#3f2a63;color:#c9a7ff}
+.chip.to_charge{background:#14503a;color:var(--ok)}.chip.queued{background:#16315f;color:var(--muted)}
+.chip.in_progress{background:#0f4a6e;color:var(--cyan2)}.chip.done{background:#14503a;color:var(--ok)}
+.sublabel{color:var(--dim);font-size:10.5px;letter-spacing:1.2px;text-transform:uppercase}
+.tsum{display:flex;gap:8px;margin-bottom:10px}.tsum div{flex:1;background:#08183a;border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+.tsum b{display:block;font-size:20px;font-variant-numeric:tabular-nums}.tsum span{color:var(--muted);font-size:10.5px;letter-spacing:1px;text-transform:uppercase}
+.oform{display:grid;grid-template-columns:1fr 1fr;gap:8px;background:#08183a;border:1px solid var(--line2);border-radius:9px;padding:10px;margin-bottom:12px}
+.oform select,.oform input{background:#06122d;color:var(--text);border:1px solid var(--line2);border-radius:6px;padding:7px 8px;font:inherit;width:100%}
+.oform .full{grid-column:1/-1}.oform button{background:var(--cyan);color:#041225;border:0;border-radius:7px;padding:8px;font-weight:700;cursor:pointer}
+.oform button:hover{background:var(--cyan2)}
+.oform label{display:block;color:var(--dim);font-size:10.5px;letter-spacing:1px;text-transform:uppercase;margin-bottom:3px}
+.trow{display:flex;align-items:center;gap:10px;padding:8px;border-bottom:1px solid var(--line)}
+.trow .kd{width:8px;align-self:stretch;border-radius:4px;flex:none}
 @media(max-width:1100px){.page{grid-template-columns:1fr}.kpis{grid-template-columns:repeat(2,1fr)}.panel{max-height:none}}
 </style>
 </head>
@@ -92,22 +105,24 @@ footer b{color:var(--cyan2);font-weight:600}
   </div>
   <div class="site" id="site">—</div>
   <div class="spacer"></div>
-  <div class="clock mono"><small>Sim time</small><span id="clock">00:00:00</span></div>
-  <div class="seg" id="speed"><button data-s="1" class="on">1×</button><button data-s="5">5×</button><button data-s="20">20×</button><button data-s="60">60×</button></div>
+  <span class="sublabel">Allocator</span><div class="seg" id="alloc"><button data-a="greedy">Greedy</button><button data-a="hungarian">Hungarian</button></div>
+  <div class="clock mono"><small id="shiftlbl">Sim time</small><span id="clock">00:00:00</span></div>
+  <div class="seg" id="speed"><button data-s="1">1×</button><button data-s="10">10×</button><button data-s="60">60×</button><button data-s="300">300×</button></div>
   <div class="pill" id="live"><span class="d"></span><span id="livetxt">Connecting</span></div>
 </header>
 
 <div class="page">
   <div class="kpis">
-    <div class="kpi"><label>Fleet online</label><div class="v" id="k_online">0<small>/ 0</small></div><div class="sub">robots reporting</div></div>
-    <div class="kpi" style="--c:var(--ok)"><label>Utilization</label><div class="v" id="k_util">0<small>%</small></div><div class="sub">robots currently moving</div></div>
-    <div class="kpi" style="--c:var(--warn)"><label>Avg battery</label><div class="v" id="k_bat">0<small>%</small></div><div class="sub" id="k_batsub">lowest —</div></div>
-    <div class="kpi" style="--c:#a78bfa"><label>Distance travelled</label><div class="v" id="k_dist">0<small>cells</small></div><div class="sub">fleet total</div></div>
+    <div class="kpi"><label>Orders completed</label><div class="v" id="k_done">0<small>/ 0</small></div><div class="sub" id="k_donesub">0 queued · 0 active</div></div>
+    <div class="kpi" style="--c:var(--ok)"><label>Throughput</label><div class="v" id="k_oph">0<small>orders/h</small></div><div class="sub" id="k_ophsub">&nbsp;</div></div>
+    <div class="kpi" style="--c:var(--warn)"><label>Avg wait</label><div class="v" id="k_wait">0<small>s</small></div><div class="sub" id="k_waitsub">avg cycle —</div></div>
+    <div class="kpi" style="--c:#a78bfa"><label>Utilization</label><div class="v" id="k_util">0<small>%</small></div><div class="sub" id="k_utilsub">robots busy</div></div>
+    <div class="kpi" style="--c:#38bdf8"><label>Energy used</label><div class="v" id="k_en">0<small>kWh</small></div><div class="sub" id="k_ensub">0 stock mismatches found</div></div>
   </div>
 
   <div class="card">
-    <div class="hd"><h2>Fleet map</h2><span class="hint" id="hint">Click a robot, then click the floor to dispatch it</span><span class="spacer"></span>
-      <button class="btn" id="randBtn">Demo dispatch</button></div>
+    <div class="hd"><h2>Fleet map</h2><span class="hint" id="hint">Click a robot to inspect it · click the floor to send an idle robot</span><span class="spacer"></span>
+      <button class="btn" id="autoBtn">Auto orders: ON</button><button class="btn" id="resetBtn">Reset shift</button></div>
     <div id="mapwrap"><canvas id="map"></canvas><div id="tip"></div><div class="legend" id="legend"></div></div>
   </div>
 
@@ -172,10 +187,8 @@ function drawFloor(){
     g.setLineDash([5,4]); g.strokeStyle=z.color+'cc'; g.lineWidth=1.2; g.stroke(); g.setLineDash([]);
     g.font=`700 ${Math.max(9,cell*.52)}px Inter,Segoe UI,sans-serif`; g.fillStyle='#c7d8f5'; g.textBaseline='top';
     g.fillText(names[k]||k.toUpperCase(),z.x*cell+7,z.y*cell+6);
-    if(k==='charging_area'){ // charger bays
-      g.fillStyle='#2E9FE8'; for(let x=z.x+1;x<z.x+z.w-1;x+=2){rr(g,x*cell+cell*.25,(z.y+z.h-1)*cell+cell*.3,cell*.5,cell*.4,2);g.fill()}
-    }
   }
+  for(const c of (MAP.chargers||[])){g.fillStyle='#2E9FE8';rr(g,c[0]*cell+cell*.15,c[1]*cell+cell*.72,cell*.7,cell*.2,2);g.fill()}
   // shelves as rack bays
   const rows=[...MAP.shelves].sort((a,b)=>a.y-b.y);
   rows.forEach((s,i)=>{
@@ -221,6 +234,15 @@ function drawPath(r,p,color,strong){
   if(r.target){const x=(r.target[0]+.5)*cell,y=(r.target[1]+.5)*cell;ctx.globalAlpha=1;ctx.fillStyle=color;ctx.beginPath();ctx.moveTo(x,y-cell*.5);ctx.lineTo(x+cell*.4,y);ctx.lineTo(x,y+cell*.5);ctx.lineTo(x-cell*.4,y);ctx.closePath();ctx.fill()}
   ctx.restore();
 }
+const KC={box_pick:'#2E9FE8',high_pick:'#f5a524',pallet_move:'#e5484d',inventory_scan:'#46a758'},KL={box_pick:'B',high_pick:'H',pallet_move:'P',inventory_scan:'S'};
+function drawTasks(){
+  for(const t of SNAP.tasks){
+    if(t.status!=='queued') continue;
+    const x=(t.pickup[0]+.5)*cell,y=(t.pickup[1]+.5)*cell,R=Math.max(5,cell*.32);
+    ctx.fillStyle=KC[t.kind]+'33';ctx.strokeStyle=KC[t.kind];ctx.lineWidth=1.3;rr(ctx,x-R,y-R,R*2,R*2,3);ctx.fill();ctx.stroke();
+    ctx.fillStyle=KC[t.kind];ctx.font=`700 ${Math.max(8,cell*.42)}px Inter,sans-serif`;ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(KL[t.kind],x,y+.5);ctx.textAlign='left';
+  }
+}
 function frame(){
   requestAnimationFrame(frame); if(!MAP) return;
   ctx.setTransform(1,0,0,1,0,0); ctx.drawImage(floor,0,0); ctx.setTransform(dpr,0,0,dpr,0,0);
@@ -228,6 +250,7 @@ function frame(){
   for(const r of SNAP.robots){ // ease towards the latest server position
     const d=disp[r.id]||(disp[r.id]={x:r.x,y:r.y}); d.x+=(r.x-d.x)*.35; d.y+=(r.y-d.y)*.35;
   }
+  drawTasks();
   for(const r of SNAP.robots) drawPath(r,disp[r.id],MAP.types[r.type].color,r.id===sel);
   // draw flying robots last so they appear above ground traffic
   const order=[...SNAP.robots].sort((a,b)=>MAP.types[a.type].flying-MAP.types[b.type].flying);
@@ -235,22 +258,31 @@ function frame(){
 }
 
 /* ---------- side panel + KPIs ---------- */
+function fmtDur(x){x=Math.round(x);return x<60?x+'s':Math.floor(x/60)+'m '+String(x%60).padStart(2,'0')+'s'}
 function onSnap(){
-  const R=SNAP.robots, n=R.length, mv=R.filter(r=>r.state==='moving').length;
-  const on=R.filter(r=>r.state!=='fault').length, avg=R.reduce((a,r)=>a+r.battery,0)/n, low=R.reduce((a,r)=>r.battery<a.battery?r:a,R[0]);
+  const R=SNAP.robots,n=R.length,k=SNAP.kpis,on=R.filter(r=>r.state!=='fault').length;
   $('clock').textContent=fmtT(SNAP.t);
-  $('k_online').innerHTML=`${on}<small>/ ${n}</small>`;
-  $('k_util').innerHTML=`${Math.round(mv/n*100)}<small>%</small>`;
-  $('k_bat').innerHTML=`${avg.toFixed(1)}<small>%</small>`; $('k_batsub').textContent=`lowest ${low.id} · ${low.battery}%`;
-  $('k_dist').innerHTML=`${Math.round(R.reduce((a,r)=>a+r.dist,0))}<small>cells</small>`;
+  $('shiftlbl').textContent='Shift '+Math.min(100,Math.round(SNAP.t/SNAP.shift*100))+'%';
+  $('livetxt').textContent='Live · '+on+'/'+n;
+  $('k_done').innerHTML=`${k.completed}<small>/ ${k.created}</small>`;
+  $('k_donesub').textContent=`${k.queued} queued · ${k.active} active`;
+  $('k_oph').innerHTML=`${k.orders_per_hour}<small>orders/h</small>`;
+  $('k_ophsub').textContent=`B ${k.by_kind.box_pick} · H ${k.by_kind.high_pick} · P ${k.by_kind.pallet_move} · S ${k.by_kind.inventory_scan}`;
+  $('k_wait').innerHTML=`${Math.round(k.avg_wait)}<small>s</small>`;
+  $('k_waitsub').textContent='avg cycle '+fmtDur(k.avg_cycle);
+  $('k_util').innerHTML=`${Math.round(k.utilization)}<small>%</small>`;
+  $('k_en').innerHTML=`${k.energy_kwh}<small>kWh</small>`;
+  $('k_ensub').textContent=`${k.mismatches} stock mismatches found`;
   document.querySelectorAll('#speed button').forEach(b=>b.classList.toggle('on',+b.dataset.s===SNAP.scale));
-  if(tab==='robots'||tab==='vendors') renderPanel();
+  document.querySelectorAll('#alloc button').forEach(b=>b.classList.toggle('on',b.dataset.a===SNAP.allocator));
+  $('autoBtn').textContent='Auto orders: '+(SNAP.auto_orders?'ON':'OFF');
+  if(tab==='tasks') updateTasks(); else renderPanel();
 }
 function rowHTML(r){
   const t=MAP.types[r.type];
   return `<div class="rob ${r.id===sel?'sel':''}" data-id="${r.id}">
     <div class="ic" style="background:${t.color}">${GLYPH[r.type]}</div>
-    <div><div class="nm">${r.id.replace(/_/g,' ')}</div><div class="meta">${t.vendor} · ${t.interface}</div></div>
+    <div><div class="nm">${r.id.replace(/_/g,' ')}</div><div class="meta">${r.action?r.action:t.vendor+' · '+t.interface}</div></div>
     <div class="r"><span class="chip ${r.state}">${r.state}</span><div class="bat"><i style="width:${r.battery}%;background:${batColor(r.battery)}"></i></div></div></div>`;
 }
 function renderPanel(){
@@ -264,6 +296,8 @@ function renderPanel(){
       <div class="kv"><b>Type</b><span>${t.label}</span></div><div class="kv"><b>Vendor</b><span>${t.vendor}</span></div>
       <div class="kv"><b>Interface</b><span class="mono">${t.interface}</span></div><div class="kv"><b>Speed</b><span>${t.speed} cells/s</span></div>
       <div class="kv"><b>State</b><span class="chip ${r.state}">${r.state}</span></div>
+      <div class="kv"><b>Task</b><span>${r.task?'#'+r.task:'—'}</span></div>
+      <div class="kv"><b>Action</b><span>${r.action||'—'}</span></div>
       <div class="kv"><b>Position</b><span class="mono">${Math.round(r.x)}, ${Math.round(r.y)}</span></div>
       <div class="kv"><b>Target</b><span class="mono">${r.target?r.target.join(', '):'—'}</span></div>
       <div class="kv"><b>Remaining</b><span>${r.path_len} cells</span></div>
@@ -285,14 +319,48 @@ function renderPanel(){
       <div class="kv"><b>Robots</b><span>${n} (${mv} active)</span></div>
       <div class="kv"><b>Adapter</b><span class="badge">SIMULATED</span></div></div>`}).join('')+
       `<div class="hint" style="color:var(--dim);font-size:11px;padding:2px 4px">Real vendor adapters are added in Phase 3. All four vendors currently run under one TusCore core.</div>`;
-  } else {
-    P.innerHTML=`<div class="empty"><b>No orders yet</b>The order generator, task queue and manual order form arrive in Phase 2.</div>`;
+  } else { renderTasks(); }
+}
+const KN={box_pick:'Box pick',high_pick:'High-shelf pick (lift + tote)',pallet_move:'Pallet move',inventory_scan:'Inventory scan'};
+function renderTasks(){
+  const P=$('panel');
+  if(!$('tlist')){
+    const rows=MAP.shelves.slice().sort((a,b)=>a.y-b.y).map((s,i)=>`<option value="${i}">A${i+1}</option>`).join('');
+    P.innerHTML=`<div class="tsum" id="tsum"></div>
+    <form class="oform" id="oform">
+      <div class="full"><label>New order</label><select id="o_kind">${MAP.kinds.map(k=>`<option value="${k}">${KN[k]}</option>`).join('')}</select></div>
+      <div><label>Shelf row</label><select id="o_row"><option value="">Random</option>${rows}</select></div>
+      <div><label>Bay (1-30)</label><input id="o_bay" type="number" min="1" max="30" placeholder="Random"></div>
+      <div class="full"><button type="submit">Submit order</button></div>
+    </form><div id="tlist"></div>`;
+    const sync=()=>{const k=$('o_kind').value;$('o_row').disabled=k==='pallet_move';$('o_bay').disabled=!(k==='box_pick'||k==='high_pick')};
+    $('o_kind').onchange=sync; sync();
+    $('oform').onsubmit=async e=>{e.preventDefault();
+      const row=$('o_row').value,bay=$('o_bay').value;
+      await fetch('/api/orders',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind:$('o_kind').value,row:row===''||$('o_row').disabled?null:+row,bay:bay===''||$('o_bay').disabled?null:+bay-1})});};
   }
+  updateTasks();
+}
+function updateTasks(){
+  if(!SNAP||!$('tlist')) return renderTasks();
+  const k=SNAP.kpis;
+  $('tsum').innerHTML=`<div><b>${k.queued}</b><span>Queued</span></div><div><b>${k.active}</b><span>Active</span></div><div><b>${k.completed}</b><span>Done</span></div>`;
+  const label={queued:'Queued',in_progress:'Active',done:'Done'};
+  const rows=[...SNAP.tasks.filter(t=>t.status==='in_progress'),...SNAP.tasks.filter(t=>t.status==='queued'),...SNAP.recent.slice(0,8)].slice(0,40);
+  $('tlist').innerHTML=rows.map(t=>{
+    const who=Object.values(t.robots).map(id=>id.replace(/_/g,' ')).join(' + ');
+    const meta=t.status==='queued'?'waiting '+fmtDur(t.wait):t.status==='done'?`done in ${fmtDur(t.cycle)} · ${who}`:who;
+    return `<div class="trow"><span class="kd" style="background:${KC[t.kind]}"></span>
+      <div style="min-width:0"><div class="nm">#${t.id} ${t.title}${t.manual?' <span class="badge">MANUAL</span>':''}${t.mismatch&&t.status==='done'?' <span class="badge" style="color:var(--warn)">MISMATCH</span>':''}</div><div class="meta">${meta}</div></div>
+      <div class="r" style="margin-left:auto;text-align:right"><span class="chip ${t.status}">${label[t.status]}</span><div class="bat"><i style="width:${t.progress*100}%;background:var(--cyan)"></i></div></div></div>`}).join('')||'<div class="empty"><b>No orders yet</b>Orders arrive automatically during the shift, or submit one above.</div>';
 }
 $('panel').addEventListener('click',e=>{const el=e.target.closest('.rob'); if(el){sel=sel===el.dataset.id?null:el.dataset.id;renderPanel()}});
 $('tabs').addEventListener('click',e=>{const b=e.target.closest('button'); if(!b)return; tab=b.dataset.t; document.querySelectorAll('#tabs button').forEach(x=>x.classList.toggle('on',x===b)); renderPanel()});
 $('speed').addEventListener('click',e=>{const b=e.target.closest('button'); if(b) fetch('/api/sim/speed',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({scale:+b.dataset.s})})});
-$('randBtn').onclick=()=>fetch('/api/demo/random',{method:'POST'});
+const post=(u,b)=>fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
+$('alloc').addEventListener('click',e=>{const b=e.target.closest('button');if(b)post('/api/sim/allocator',{name:b.dataset.a})});
+$('autoBtn').onclick=()=>post('/api/sim/auto-orders',{enabled:!(SNAP&&SNAP.auto_orders)});
+$('resetBtn').onclick=()=>post('/api/sim/reset',{});
 
 /* ---------- map interaction ---------- */
 const pt=e=>{const r=cv.getBoundingClientRect();return{fx:(e.clientX-r.left)/cell,fy:(e.clientY-r.top)/cell,px:e.clientX-r.left,py:e.clientY-r.top}};

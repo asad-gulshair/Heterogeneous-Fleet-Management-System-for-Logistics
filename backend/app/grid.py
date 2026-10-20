@@ -16,6 +16,12 @@ class Grid:
                 for y in range(s["y"], s["y"] + s["h"]):
                     self.blocked.add((x, y))
 
+        # Charger bays: one row along the bottom of the charging area, every second cell.
+        self.chargers: list[tuple[int, int]] = []
+        z = self.zones.get("charging_area")
+        if z:
+            self.chargers = [(x, z["y"] + z["h"] - 1) for x in range(z["x"] + 1, z["x"] + z["w"] - 1, 2)]
+
     def in_bounds(self, x: int, y: int) -> bool:
         return 0 <= x < self.width and 0 <= y < self.height
 
@@ -54,4 +60,5 @@ class Grid:
             "height": self.height,
             "shelves": self.shelves,
             "zones": self.zones,
+            "chargers": [list(c) for c in self.chargers],
         }

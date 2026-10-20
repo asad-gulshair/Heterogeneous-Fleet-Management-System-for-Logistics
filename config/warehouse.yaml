@@ -13,7 +13,7 @@ shelves:
   - {x: 6,  y: 21, w: 30, h: 2}
   - {x: 6,  y: 25, w: 30, h: 2}
 
-# Zones are walkable floor areas with a label (used for drawing + later for task targets).
+# Zones are walkable floor areas with a label.
 zones:
   pallet_area:   {x: 42, y: 4,  w: 14, h: 12, color: "#3b4a6b"}
   packing_1:     {x: 4,  y: 32, w: 6,  h: 4,  color: "#1f6f5c"}
@@ -22,6 +22,7 @@ zones:
   charging_area: {x: 30, y: 33, w: 14, h: 5,  color: "#2E9FE8"}
 
 # Robot types. count = how many are spawned. speed = cells/second.
+# capabilities = which task roles the robot can fill. battery_kwh = pack size (for the energy KPI).
 robot_types:
   tote_amr:
     label: "Tote AMR"
@@ -30,6 +31,8 @@ robot_types:
     count: 6
     speed: 1.0
     flying: false
+    capabilities: [carry_tote]
+    battery_kwh: 1.2
     color: "#2E9FE8"
     shape: circle
   scissor_lift:
@@ -39,6 +42,8 @@ robot_types:
     count: 3
     speed: 0.7
     flying: false
+    capabilities: [high_pick]
+    battery_kwh: 2.0
     color: "#f5a524"
     shape: square
   pallet_stacker:
@@ -48,6 +53,8 @@ robot_types:
     count: 2
     speed: 0.5
     flying: false
+    capabilities: [move_pallet]
+    battery_kwh: 4.0
     color: "#e5484d"
     shape: triangle
   drone:
@@ -57,9 +64,23 @@ robot_types:
     count: 1
     speed: 2.0
     flying: true
+    capabilities: [scan]
+    battery_kwh: 0.15
     color: "#46a758"
     shape: diamond
 
-# Battery model (percent). drain = % lost per cell moved.
+# Shift + order generation (Poisson arrivals, reproducible via seed).
+shift:
+  length_s: 28800        # 8 hours of simulated time
+  seed: 42
+orders:
+  rate_per_hour: {box_pick: 220, high_pick: 55, pallet_move: 24, inventory_scan: 6}
+  dwell_s: {pick: 3, drop: 2, high_pick: 6, handoff: 2, pallet_pick: 4, pallet_drop: 4, scan: 1}
+  scan_mismatch_prob: 0.08
+
+# Battery model (percent).
 battery:
-  drain_per_cell: 0.05
+  drain_per_cell: 0.02      # % lost per cell moved
+  charge_rate_per_s: 1.5    # % gained per simulated second on a charger bay
+  low_threshold: 30         # below this a robot stops taking tasks and goes to charge
+  resume_threshold: 90      # leaves the charger at this level

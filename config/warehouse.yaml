@@ -1,0 +1,65 @@
+# TusCore warehouse layout. Change this file to get a new layout - no code changes needed.
+name: "Demo Warehouse"
+width: 60
+height: 40
+
+# Shelves are obstacles for ground robots (the drone flies over them).
+# Each rect: x,y = top-left cell, w,h = size in cells.
+shelves:
+  - {x: 6,  y: 5,  w: 30, h: 2}
+  - {x: 6,  y: 9,  w: 30, h: 2}
+  - {x: 6,  y: 13, w: 30, h: 2}
+  - {x: 6,  y: 17, w: 30, h: 2}
+  - {x: 6,  y: 21, w: 30, h: 2}
+  - {x: 6,  y: 25, w: 30, h: 2}
+
+# Zones are walkable floor areas with a label (used for drawing + later for task targets).
+zones:
+  pallet_area:   {x: 42, y: 4,  w: 14, h: 12, color: "#3b4a6b"}
+  packing_1:     {x: 4,  y: 32, w: 6,  h: 4,  color: "#1f6f5c"}
+  packing_2:     {x: 14, y: 32, w: 6,  h: 4,  color: "#1f6f5c"}
+  loading_dock:  {x: 50, y: 28, w: 8,  h: 10, color: "#7a5a1f"}
+  charging_area: {x: 30, y: 33, w: 14, h: 5,  color: "#2E9FE8"}
+
+# Robot types. count = how many are spawned. speed = cells/second.
+robot_types:
+  tote_amr:
+    label: "Tote AMR"
+    vendor: "Vendor A"
+    interface: "VDA 5050 / MQTT"
+    count: 6
+    speed: 1.0
+    flying: false
+    color: "#2E9FE8"
+    shape: circle
+  scissor_lift:
+    label: "Scissor-lift AMR (TL-65)"
+    vendor: "Tusmec"
+    interface: "REST API"
+    count: 3
+    speed: 0.7
+    flying: false
+    color: "#f5a524"
+    shape: square
+  pallet_stacker:
+    label: "Pallet stacker AGV"
+    vendor: "Vendor C"
+    interface: "TCP / JSON"
+    count: 2
+    speed: 0.5
+    flying: false
+    color: "#e5484d"
+    shape: triangle
+  drone:
+    label: "Inventory drone"
+    vendor: "Vendor D"
+    interface: "MAVLink-style"
+    count: 1
+    speed: 2.0
+    flying: true
+    color: "#46a758"
+    shape: diamond
+
+# Battery model (percent). drain = % lost per cell moved.
+battery:
+  drain_per_cell: 0.05

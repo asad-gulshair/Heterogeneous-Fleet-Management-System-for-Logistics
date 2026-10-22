@@ -30,6 +30,15 @@ class Robot:
     dwell_left: float = 0.0
     action: str | None = None                  # label of the current action
     bay: tuple | None = None                   # reserved charger bay
+    # --- traffic / health / comms ---
+    priority: int = 1                          # higher wins a contested cell; lowest yields in a deadlock
+    blocked_by: str | None = None              # robot whose cell we are waiting for
+    blocked_for: float = 0.0                   # seconds we have been waiting
+    replan_mark: float = 0.0
+    last_evade: float = -999.0
+    repair_at: float = 0.0
+    fault_count: int = 0
+    telemetry: dict = field(default_factory=dict)   # last state decoded by the vendor adapter
     # --- statistics ---
     busy_time: float = 0.0
     energy_kwh: float = 0.0
@@ -56,24 +65,7 @@ class Robot:
         self.idx = 0
         self.action = None
         self.dwell_left = 0.0
-
-    def step(self, dt: float, drain_per_cell: float):
-        """Advance along the path using a distance budget = speed * dt (in cells)."""
-        budget = self.speed * dt
-        while budget > 0 and self.path:
-            remaining = 1.0 - self.frac
-            if budget >= remaining:
-                self.cell = self.path.pop(0)
-                self.frac = 0.0
-                budget -= remaining
-                self.dist += 1
-                self.battery = max(0.0, self.battery - drain_per_cell)
-                self.energy_kwh += drain_per_cell / 100.0 * self.kwh
-            else:
-                self.frac += budget
-                budget = 0
-        if not self.path:
-            self.target = None
+        self.blocked_by, self.blocked_for = None, 0.0
 
     def to_dict(self) -> dict:
         x, y = self.pos
@@ -87,4 +79,6 @@ class Robot:
             "path": [list(c) for c in self.path],
             "dist": round(self.dist, 1),
             "task": self.task_id, "action": self.action,
+            "priority": self.priority, "blocked_for": round(self.blocked_for, 1), "blocked_by": self.blocked_by,
+            "faults": self.fault_count, "tel": self.telemetry,
         }

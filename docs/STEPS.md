@@ -31,3 +31,21 @@
 | Energy | 49.4 kWh | 48.8 kWh |
 
 At light load (utilization ~34 %) both are identical because a free robot is always nearby - the allocator only matters when robots are scarce. The pallet stackers (2 robots) are the bottleneck at higher loads.
+
+## Phase 3 - Sharing the floor safely
+Note: the Phase 2 numbers above were measured *before* traffic control, faults and charging staggering were added; they are the idealised baseline.
+
+1. **Cell reservation** (`traffic.py`, `sim._move`): a ground robot owns the cell it stands on and must *claim* the next cell before leaving. Two robots can therefore never share a cell - collisions are impossible by construction, and a collision counter verifies it every step (always 0).
+2. **Lane discipline** (`planner.py`): A* charges slightly more for the "wrong" lane (east on even rows, west on odd rows, ...), so opposing traffic naturally uses different lanes. Deadlocks dropped from ~1300 to ~150 per shift.
+3. **Priority** (`robots.priority`): processing order and who yields. Pallet stacker 3 > scissor lift 2 > tote 1 -> pallets first in narrow aisles.
+4. **Deadlock handling** (`sim._resolve_traffic`): build the wait-for graph (robot -> robot whose cell it needs, or whose hand-over it waits for). A cycle = deadlock. Resolution ladder: (a) the robot that holds a contested cell and has the lowest priority detours or side-steps; (b) idle robots standing in someone's way are told to make way (evade); (c) robots blocked by a standing robot re-plan around it; (d) if the same deadlock lasts 10 s, the newest order is preempted and re-queued; (e) watchdog after 300 s (never triggered in stress tests).
+5. **Order site reservation**: an order only starts if none of its work cells (pick, hand-over, drop) is reserved by another active order. This removed the "two high picks on the same bay" deadlock at its root.
+6. **Faults** (`inject_fault`, `_requeue`): random (Poisson, MTBF 6 h per robot) or injected from the console. The robot stops where it is (and blocks its cell), its order - and the partner robot - are released and the order returns to the queue front; the robot is repaired after 120 s.
+7. **Staggered charging** (`_charge_decision`): critical (<12 %) charges at once; <30 % charges if at most half of that robot type is already charging; <50 % tops up only when nothing is waiting for that robot's skills. Limited charger bays.
+8. **Vendor adapters** (`adapters/`): the manager speaks one common language; each vendor adapter encodes it into the vendor's wire format and decodes the robot's replies - VDA 5050 over MQTT topics (`uagv/v2/.../order|state`), REST/JSON missions, CRC-framed TCP/JSON, MAVLink-style mission items. All traffic is logged to the Protocol tab. Adding a vendor = one subclass + one line in the registry + `adapter:` in the YAML. Outage toggle: no new missions to that vendor while offline.
+9. **Event log + safety strip**: collisions, deadlocks auto-resolved, permanent deadlocks, faults/reassignments, time lost to traffic.
+10. **Tests** (`backend/tests`): A*, adapter round-trips for all four protocols, deadlock detection, a 1-hour safe shift, fault recovery. Run `python -m pytest -q`.
+
+### Verified (headless 8-hour shifts, high load 190 box + 50 high picks/h, ~15 random faults per shift)
+12 runs (6 seeds x greedy/Hungarian): every order completed, **0 collisions, 0 permanent deadlocks**.
+Honest finding: with real traffic, the allocator (greedy vs Hungarian) changes average wait only a few percent - the bottleneck is robot count and congestion, not assignment. The headline for clients is the Phase 4 comparison of separate vendor managers vs one TusCore.

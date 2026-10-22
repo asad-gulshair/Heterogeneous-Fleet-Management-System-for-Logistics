@@ -27,6 +27,8 @@ class Task:
     sync: dict = field(default_factory=dict)         # sync key -> set(robot ids waiting)
     mismatch: bool = False           # inventory scan found a stock mismatch
     manual: bool = False
+    counted: bool = False            # wait time already added to the KPI (only the first dispatch counts)
+    reassigned: int = 0              # how often the order was re-queued after a robot fault
 
     @property
     def total_actions(self) -> int:
@@ -44,6 +46,6 @@ class Task:
             "progress": round(self.done_actions / max(1, self.total_actions), 2),
             "created": round(self.created, 1), "wait": round(wait, 1),
             "pickup": list(self.pickup()), "manual": self.manual,
-            "mismatch": self.mismatch,
+            "mismatch": self.mismatch, "reassigned": self.reassigned,
             "cycle": round(self.finished - self.created, 1) if self.finished is not None else None,
         }

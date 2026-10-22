@@ -38,7 +38,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="TusCore Fleet Manager API",
-    version="0.2",
+    version="0.3",
     description="Heterogeneous fleet manager / logistics digital twin. Submit orders, read fleet status, control the simulation.",
     lifespan=lifespan,
 )
@@ -95,6 +95,23 @@ async def get_kpis():
     return sim.kpis()
 
 
+@app.get("/api/vendors", tags=["vendors"])
+async def get_vendors():
+    """Connected vendor adapters with online status and message counters."""
+    return sim.vendors()
+
+
+@app.get("/api/messages", tags=["vendors"])
+async def get_messages(limit: int = 50, vendor: Optional[str] = None):
+    """Recent wire messages (protocol inspector): VDA 5050, REST, TCP/JSON, MAVLink-style."""
+    return sim.bus.recent(min(limit, 300), vendor)
+
+
+@app.get("/api/events", tags=["fleet"])
+async def get_events(limit: int = 50):
+    return sim.events.recent(min(limit, 300))
+
+
 @app.get("/api/orders", tags=["orders"])
 async def list_orders():
     s = sim.snapshot()
@@ -113,6 +130,29 @@ async def create_order(body: OrderIn):
 async def goto(robot_id: str, body: Goto):
     ok, msg = sim.goto(robot_id, body.x, body.y)
     return {"ok": ok, "message": msg}
+
+
+@app.post("/api/robots/{robot_id}/fault", tags=["fleet"])
+async def inject_fault(robot_id: str):
+    """Break a robot (demo / testing). Its order is returned to the queue and reassigned."""
+    if not sim.inject_fault(robot_id, "injected from console"):
+        raise HTTPException(404, "unknown robot or already faulted")
+    return {"ok": True}
+
+
+@app.post("/api/robots/{robot_id}/repair", tags=["fleet"])
+async def repair(robot_id: str):
+    if not sim.repair_robot(robot_id):
+        raise HTTPException(404, "unknown robot or not faulted")
+    return {"ok": True}
+
+
+@app.post("/api/vendors/{vendor_id}/online", tags=["vendors"])
+async def vendor_online(vendor_id: str, body: ToggleIn):
+    """Simulate a vendor outage / reconnect. While offline no NEW missions are sent to that vendor's robots."""
+    if not sim.set_vendor_online(vendor_id, body.enabled):
+        raise HTTPException(404, "unknown vendor")
+    return {"ok": True}
 
 
 @app.post("/api/sim/speed", tags=["simulation"])

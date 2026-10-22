@@ -25,6 +25,9 @@ zones:
 # capabilities = which task roles the robot can fill. battery_kwh = pack size (for the energy KPI).
 robot_types:
   tote_amr:
+    adapter: vda5050        # translator to the vendor's own protocol
+    priority: 1           # higher wins contested cells (pallets first in narrow aisles)
+    latency_ms: 35
     label: "Tote AMR"
     vendor: "Vendor A"
     interface: "VDA 5050 / MQTT"
@@ -36,6 +39,9 @@ robot_types:
     color: "#2E9FE8"
     shape: circle
   scissor_lift:
+    adapter: rest        # translator to the vendor's own protocol
+    priority: 2           # higher wins contested cells (pallets first in narrow aisles)
+    latency_ms: 60
     label: "Scissor-lift AMR (TL-65)"
     vendor: "Tusmec"
     interface: "REST API"
@@ -47,6 +53,9 @@ robot_types:
     color: "#f5a524"
     shape: square
   pallet_stacker:
+    adapter: tcp_json        # translator to the vendor's own protocol
+    priority: 3           # higher wins contested cells (pallets first in narrow aisles)
+    latency_ms: 15
     label: "Pallet stacker AGV"
     vendor: "Vendor C"
     interface: "TCP / JSON"
@@ -58,6 +67,9 @@ robot_types:
     color: "#e5484d"
     shape: triangle
   drone:
+    adapter: mavlink        # translator to the vendor's own protocol
+    priority: 0           # higher wins contested cells (pallets first in narrow aisles)
+    latency_ms: 10
     label: "Inventory drone"
     vendor: "Vendor D"
     interface: "MAVLink-style"
@@ -74,7 +86,7 @@ shift:
   length_s: 28800        # 8 hours of simulated time
   seed: 42
 orders:
-  rate_per_hour: {box_pick: 220, high_pick: 55, pallet_move: 24, inventory_scan: 6}
+  rate_per_hour: {box_pick: 170, high_pick: 45, pallet_move: 24, inventory_scan: 6}
   dwell_s: {pick: 3, drop: 2, high_pick: 6, handoff: 2, pallet_pick: 4, pallet_drop: 4, scan: 1}
   scan_mismatch_prob: 0.08
 
@@ -83,4 +95,17 @@ battery:
   drain_per_cell: 0.02      # % lost per cell moved
   charge_rate_per_s: 1.5    # % gained per simulated second on a charger bay
   low_threshold: 30         # below this a robot stops taking tasks and goes to charge
+  critical_threshold: 12    # below this it charges immediately, ignoring the staggering rule
+  opportunistic_threshold: 50   # idle robots below this top up if no order is waiting for their skills
   resume_threshold: 90      # leaves the charger at this level
+
+# Faults: each robot fails randomly (Poisson, mean time between failures) and is repaired later.
+faults:
+  mtbf_hours: 6.0           # 0 = no random faults (you can still inject them from the console)
+  repair_s: 120
+
+# Traffic management
+traffic:
+  block_s: 0.5              # a robot waiting this long for a cell is "stuck" and checked for deadlock
+  replan_s: 3.0             # re-plan around standing robots after this long
+  watchdog_s: 300           # safety net: a robot stuck this long is declared faulted (should never happen)

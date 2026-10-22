@@ -94,6 +94,19 @@ footer b{color:var(--cyan2);font-weight:600}
 .oform label{display:block;color:var(--dim);font-size:10.5px;letter-spacing:1px;text-transform:uppercase;margin-bottom:3px}
 .trow{display:flex;align-items:center;gap:10px;padding:8px;border-bottom:1px solid var(--line)}
 .trow .kd{width:8px;align-self:stretch;border-radius:4px;flex:none}
+.safety{grid-column:1/-1;display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-top:-4px}
+.sf{display:flex;align-items:center;gap:10px;background:#08183a;border:1px solid var(--line);border-radius:8px;padding:7px 12px}
+.sf i{width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 8px var(--ok);flex:none}.sf i.warn{background:var(--warn);box-shadow:0 0 8px var(--warn)}.sf i.bad{background:var(--bad);box-shadow:0 0 8px var(--bad)}
+.sf b{font-size:15px;font-variant-numeric:tabular-nums}.sf span{color:var(--muted);font-size:11px;letter-spacing:.8px;text-transform:uppercase}
+.chip.error{background:#5a1c27;color:var(--bad)}
+.ev{display:flex;gap:8px;padding:6px 4px;border-bottom:1px solid var(--line);font-size:12px}.ev time{color:var(--dim);font-variant-numeric:tabular-nums;flex:none;width:58px}
+.ev .sv{width:6px;border-radius:3px;flex:none}.sv.info{background:var(--dim)}.sv.ok{background:var(--ok)}.sv.warn{background:var(--warn)}.sv.error{background:var(--bad)}
+.msg{padding:7px 4px;border-bottom:1px solid var(--line);font-size:11px}.msg .h{display:flex;flex-wrap:wrap;gap:4px 8px;align-items:center;color:var(--muted);margin-bottom:2px}.msg .h .mono{word-break:break-all}
+.msg .h b{color:var(--text)}.msg code{display:block;color:#9fc2ee;word-break:break-all;font:11px/1.35 ui-monospace,Consolas,monospace;max-height:3.9em;overflow:hidden}
+.dir{font-weight:700}.dir.out{color:var(--cyan2)}.dir.in{color:var(--ok)}
+.btn.danger{color:var(--bad);border-color:#6b2431}.btn.danger:hover{background:#3a1420;border-color:var(--bad)}
+.btn.sm{padding:3px 9px;font-size:11px}
+.tabs button{font-size:11px;letter-spacing:.4px}
 @media(max-width:1100px){.page{grid-template-columns:1fr}.kpis{grid-template-columns:repeat(2,1fr)}.panel{max-height:none}}
 </style>
 </head>
@@ -120,6 +133,8 @@ footer b{color:var(--cyan2);font-weight:600}
     <div class="kpi" style="--c:#38bdf8"><label>Energy used</label><div class="v" id="k_en">0<small>kWh</small></div><div class="sub" id="k_ensub">0 stock mismatches found</div></div>
   </div>
 
+  <div class="safety" id="safety"></div>
+
   <div class="card">
     <div class="hd"><h2>Fleet map</h2><span class="hint" id="hint">Click a robot to inspect it · click the floor to send an idle robot</span><span class="spacer"></span>
       <button class="btn" id="autoBtn">Auto orders: ON</button><button class="btn" id="resetBtn">Reset shift</button></div>
@@ -127,7 +142,7 @@ footer b{color:var(--cyan2);font-weight:600}
   </div>
 
   <div class="card" style="overflow:hidden">
-    <div class="tabs" id="tabs"><button data-t="robots" class="on">Robots</button><button data-t="tasks">Tasks</button><button data-t="vendors">Vendors</button></div>
+    <div class="tabs" id="tabs"><button data-t="robots" class="on">Robots</button><button data-t="tasks">Tasks</button><button data-t="vendors">Vendors</button><button data-t="events">Events</button><button data-t="protocol">Protocol</button></div>
     <div class="panel" id="panel"></div>
   </div>
 </div>
@@ -223,6 +238,9 @@ function drawRobot(r,p){
   // battery ring
   ctx.lineWidth=2.2; ctx.strokeStyle='rgba(255,255,255,.14)'; ctx.beginPath(); ctx.arc(cx,cy,R+4,0,7); ctx.stroke();
   ctx.strokeStyle=batColor(r.battery); ctx.beginPath(); ctx.arc(cx,cy,R+4,-Math.PI/2,-Math.PI/2+Math.PI*2*r.battery/100); ctx.stroke();
+  if(r.state==='fault'){const p=.6+.4*Math.sin(Date.now()/180);ctx.strokeStyle=`rgba(255,93,108,${p})`;ctx.lineWidth=2.4;ctx.beginPath();ctx.arc(cx,cy,R+7,0,7);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(cx-R*.6,cy-R*.6);ctx.lineTo(cx+R*.6,cy+R*.6);ctx.moveTo(cx+R*.6,cy-R*.6);ctx.lineTo(cx-R*.6,cy+R*.6);ctx.strokeStyle='#ff5d6c';ctx.lineWidth=2.6;ctx.stroke()}
+  else if(r.blocked_for>=1&&r.state==='moving'){ctx.fillStyle='#f5a524';ctx.beginPath();ctx.arc(cx+R,cy-R,Math.max(2.5,cell*.18),0,7);ctx.fill()}
   if(r.id===sel||r.id===hover){ctx.strokeStyle='#fff';ctx.lineWidth=1.6;ctx.beginPath();ctx.arc(cx,cy,R+9,0,7);ctx.stroke()}
   ctx.restore();
 }
@@ -273,6 +291,9 @@ function onSnap(){
   $('k_util').innerHTML=`${Math.round(k.utilization)}<small>%</small>`;
   $('k_en').innerHTML=`${k.energy_kwh}<small>kWh</small>`;
   $('k_ensub').textContent=`${k.mismatches} stock mismatches found`;
+  const sf=(v,l,cls='')=>`<div class="sf"><i class="${cls}"></i><b>${v}</b><span>${l}</span></div>`;
+  $('safety').innerHTML=sf(k.collisions,'Collisions',k.collisions?'bad':'')+sf(k.deadlocks,'Deadlocks auto-resolved')+sf(k.permanent_deadlocks,'Permanent deadlocks',k.permanent_deadlocks?'bad':'')+
+    sf(`${k.faults} <small style="color:var(--muted);font-weight:500">/ ${k.reassigned} reassigned</small>`,'Robot faults','warn')+sf(k.traffic_delay_min+' min','Time lost to traffic','warn');
   document.querySelectorAll('#speed button').forEach(b=>b.classList.toggle('on',+b.dataset.s===SNAP.scale));
   document.querySelectorAll('#alloc button').forEach(b=>b.classList.toggle('on',b.dataset.a===SNAP.allocator));
   $('autoBtn').textContent='Auto orders: '+(SNAP.auto_orders?'ON':'OFF');
@@ -285,7 +306,8 @@ function rowHTML(r){
     <div><div class="nm">${r.id.replace(/_/g,' ')}</div><div class="meta">${r.action?r.action:t.vendor+' · '+t.interface}</div></div>
     <div class="r"><span class="chip ${r.state}">${r.state}</span><div class="bat"><i style="width:${r.battery}%;background:${batColor(r.battery)}"></i></div></div></div>`;
 }
-function renderPanel(){
+function renderPanel(){const P=$('panel'),st=P.scrollTop;renderPanelInner();P.scrollTop=st}
+function renderPanelInner(){
   const P=$('panel'); if(!MAP) return;
   if(tab==='robots'){
     if(!SNAP){P.innerHTML='<div class="empty">Waiting for fleet…</div>';return}
@@ -303,22 +325,33 @@ function renderPanel(){
       <div class="kv"><b>Remaining</b><span>${r.path_len} cells</span></div>
       <div class="kv"><b>Odometer</b><span>${r.dist} cells</span></div>
       <div class="kv"><b>Battery</b><span style="color:${batColor(r.battery)}">${r.battery}%</span></div>
-      <div class="bat"><i style="width:${r.battery}%;background:${batColor(r.battery)}"></i></div></div>`}
+      <div class="bat"><i style="width:${r.battery}%;background:${batColor(r.battery)}"></i></div>
+      <div style="margin-top:10px">${r.state==='fault'?`<button class="btn sm" data-act="repair" data-id="${r.id}">Repair now</button>`:`<button class="btn danger sm" data-act="fault" data-id="${r.id}">Inject fault</button>`}</div></div>`}
     for(const [k,t] of Object.entries(MAP.types)){
       const list=SNAP.robots.filter(x=>x.type===k);
       h+=`<div class="grp">${t.label} · ${list.length}</div>`+list.map(rowHTML).join('');
     }
     P.innerHTML=h;
   } else if(tab==='vendors'){
-    const by={}; for(const [k,t] of Object.entries(MAP.types)) by[k]=t;
-    P.innerHTML=Object.entries(by).map(([k,t])=>{
-      const n=SNAP?SNAP.robots.filter(r=>r.type===k).length:0, mv=SNAP?SNAP.robots.filter(r=>r.type===k&&r.state==='moving').length:0;
-      return `<div class="vend"><div class="top"><span style="width:10px;height:10px;border-radius:50%;background:${t.color}"></span><b>${t.vendor}</b><span class="on-dot"><i></i>Online</span></div>
-      <div class="kv" style="margin-top:8px"><b>Fleet</b><span>${t.label}</span></div>
-      <div class="kv"><b>Protocol</b><span class="mono">${t.interface}</span></div>
-      <div class="kv"><b>Robots</b><span>${n} (${mv} active)</span></div>
-      <div class="kv"><b>Adapter</b><span class="badge">SIMULATED</span></div></div>`}).join('')+
-      `<div class="hint" style="color:var(--dim);font-size:11px;padding:2px 4px">Real vendor adapters are added in Phase 3. All four vendors currently run under one TusCore core.</div>`;
+    const V=SNAP?SNAP.vendors:[];
+    P.innerHTML=V.map(v=>{const t=MAP.types[v.id];
+      return `<div class="vend"><div class="top"><span style="width:10px;height:10px;border-radius:50%;background:${t.color}"></span><b>${v.vendor}</b>
+      ${v.online?'<span class="on-dot"><i></i>Online</span>':'<span class="on-dot" style="color:var(--bad)"><i style="background:var(--bad);box-shadow:0 0 7px var(--bad)"></i>Offline</span>'}</div>
+      <div class="kv" style="margin-top:8px"><b>Fleet</b><span>${v.label} ×${v.robots}${v.faulted?` · <span style="color:var(--bad)">${v.faulted} faulted</span>`:''}</span></div>
+      <div class="kv"><b>Protocol</b><span class="mono">${v.protocol}</span></div>
+      <div class="kv"><b>Adapter</b><span class="badge">${v.kind.toUpperCase()}</span></div>
+      <div class="kv"><b>Messages</b><span class="mono">↑ ${v.sent} · ↓ ${v.received}</span></div>
+      <div class="kv"><b>Last heartbeat</b><span>${v.last_seen_age==null?'—':v.last_seen_age<2?'now':fmtDur(v.last_seen_age)+' ago'}</span></div>
+      <div class="kv"><b>Latency</b><span>${v.latency_ms} ms</span></div>
+      <div style="margin-top:10px"><button class="btn sm ${v.online?'danger':''}" data-act="vendor" data-id="${v.id}" data-on="${v.online?0:1}">${v.online?'Simulate outage':'Restore connection'}</button></div></div>`}).join('')+
+      `<div style="color:var(--dim);font-size:11px;padding:2px 4px">One TusCore core, four vendor protocols. A new vendor is one adapter class - nothing else changes. During an outage robots finish their current mission; no new missions are sent.</div>`;
+  } else if(tab==='events'){
+    const E=SNAP?SNAP.events:[];
+    P.innerHTML=E.map(e=>`<div class="ev"><span class="sv ${e.sev}"></span><time class="mono">${fmtT(e.t)}</time><div>${e.msg}</div></div>`).join('')||'<div class="empty"><b>No events yet</b></div>';
+  } else if(tab==='protocol'){
+    const M=SNAP?SNAP.messages:[];
+    P.innerHTML=`<div style="color:var(--dim);font-size:11px;margin-bottom:6px">Live wire messages between TusCore and each vendor's robots (simulated endpoints).</div>`+
+      M.map(m=>{const t=MAP.types[m.vendor];return `<div class="msg"><div class="h"><span class="dir ${m.dir}">${m.dir==='out'?'→ robot':'← robot'}</span><span style="width:8px;height:8px;border-radius:50%;background:${t.color}"></span><b>${m.vendor_name}</b><span class="mono">${m.topic}</span><span style="margin-left:auto" class="mono">${fmtT(m.t)}</span></div><code>${m.body.replace(/</g,'&lt;')}</code></div>`}).join('');
   } else { renderTasks(); }
 }
 const KN={box_pick:'Box pick',high_pick:'High-shelf pick (lift + tote)',pallet_move:'Pallet move',inventory_scan:'Inventory scan'};
@@ -354,7 +387,14 @@ function updateTasks(){
       <div style="min-width:0"><div class="nm">#${t.id} ${t.title}${t.manual?' <span class="badge">MANUAL</span>':''}${t.mismatch&&t.status==='done'?' <span class="badge" style="color:var(--warn)">MISMATCH</span>':''}</div><div class="meta">${meta}</div></div>
       <div class="r" style="margin-left:auto;text-align:right"><span class="chip ${t.status}">${label[t.status]}</span><div class="bat"><i style="width:${t.progress*100}%;background:var(--cyan)"></i></div></div></div>`}).join('')||'<div class="empty"><b>No orders yet</b>Orders arrive automatically during the shift, or submit one above.</div>';
 }
-$('panel').addEventListener('click',e=>{const el=e.target.closest('.rob'); if(el){sel=sel===el.dataset.id?null:el.dataset.id;renderPanel()}});
+$('panel').addEventListener('click',e=>{
+  const act=e.target.closest('[data-act]');
+  if(act){const id=act.dataset.id;
+    if(act.dataset.act==='fault') post(`/api/robots/${id}/fault`,{});
+    else if(act.dataset.act==='repair') post(`/api/robots/${id}/repair`,{});
+    else if(act.dataset.act==='vendor') post(`/api/vendors/${id}/online`,{enabled:act.dataset.on==='1'});
+    return}
+const el=e.target.closest('.rob'); if(el){sel=sel===el.dataset.id?null:el.dataset.id;renderPanel()}});
 $('tabs').addEventListener('click',e=>{const b=e.target.closest('button'); if(!b)return; tab=b.dataset.t; document.querySelectorAll('#tabs button').forEach(x=>x.classList.toggle('on',x===b)); renderPanel()});
 $('speed').addEventListener('click',e=>{const b=e.target.closest('button'); if(b) fetch('/api/sim/speed',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({scale:+b.dataset.s})})});
 const post=(u,b)=>fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});

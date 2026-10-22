@@ -1,0 +1,22 @@
+# One command:  docker compose up --build      ->  http://localhost:8000
+services:
+  mosquitto:                       # MQTT broker - VDA 5050 traffic of the tote AMRs goes over it
+    image: eclipse-mosquitto:2
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    restart: unless-stopped
+
+  tuscore:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      MQTT_HOST: mosquitto
+      MQTT_PORT: "1883"
+    volumes:
+      - ./results:/app/results      # comparison / what-if results survive restarts
+    depends_on:
+      - mosquitto
+    restart: unless-stopped

@@ -29,6 +29,9 @@ class Task:
     manual: bool = False
     counted: bool = False            # wait time already added to the KPI (only the first dispatch counts)
     reassigned: int = 0              # how often the order was re-queued after a robot fault
+    then: tuple | None = None        # (role, actions) follow-up leg created when this leg finishes (separate managers)
+    not_before: float = 0.0          # may not be dispatched before this time (WMS hand-over delay)
+    leg: int = 1                     # 1 = first leg, 2 = follow-up leg
 
     @property
     def total_actions(self) -> int:

@@ -8,6 +8,7 @@ Layers (top to bottom):
 """
 from __future__ import annotations
 import bisect
+import copy
 import math
 import random
 from collections import deque
@@ -24,14 +25,46 @@ from .traffic import TrafficManager, find_cycles
 
 SUBSTEP = 0.5   # max simulated seconds per physics step (keeps fast-forward accurate)
 STATIONARY = ("idle", "working", "waiting", "charging", "fault")
+MODES = ("tuscore", "separate")
+# what a robot carries after finishing an action (drives the 3D view and the report)
+LOAD_AFTER = {"pick box": "tote", "drop at packing": None, "pick high shelf": "tote", "hand over": None,
+              "receive tote": "tote", "place at transfer point": None, "collect tote": "tote",
+              "lift pallet": "pallet", "set down at dock": None}
+
+
+def apply_overrides(cfg: dict, ov: dict | None) -> dict:
+    """What-if overrides on top of a layout config (robot counts, order rates, chargers ...)."""
+    if not ov:
+        return cfg
+    cfg = copy.deepcopy(cfg)
+    for k, v in (ov.get("robot_counts") or {}).items():
+        if k in cfg["robot_types"]:
+            cfg["robot_types"][k]["count"] = max(0, int(v))
+    for k, v in (ov.get("order_rates") or {}).items():
+        cfg["orders"]["rate_per_hour"][k] = max(0.0, float(v))
+    if ov.get("load_factor"):
+        cfg["orders"]["rate_per_hour"] = {k: v * float(ov["load_factor"]) for k, v in cfg["orders"]["rate_per_hour"].items()}
+    if ov.get("charging_bays"):
+        cfg["charging_bays"] = int(ov["charging_bays"])
+    if ov.get("mtbf_hours") is not None:
+        cfg.setdefault("faults", {})["mtbf_hours"] = float(ov["mtbf_hours"])
+    if ov.get("shift_hours"):
+        cfg["shift"]["length_s"] = float(ov["shift_hours"]) * 3600
+    return cfg
 NEIGH = ((1, 0), (-1, 0), (0, 1), (0, -1))
 
 
 class Simulation:
-    def __init__(self, config_path: str, seed: int | None = None, allocator: str = "hungarian"):
+    def __init__(self, config_path: str, seed: int | None = None, allocator: str = "hungarian",
+                 mode: str = "tuscore", overrides: dict | None = None):
         with open(config_path, "r", encoding="utf-8") as f:
-            self.cfg = yaml.safe_load(f)
+            self.cfg = apply_overrides(yaml.safe_load(f), overrides)
+        self.config_path = config_path
+        self.mode = mode if mode in MODES else "tuscore"
         self.grid = Grid(self.cfg)
+        sep = self.cfg.get("separate_managers", {})
+        self.operator_s = sep.get("operator_response_s", 90)
+        self.wms_delay = sep.get("wms_handoff_delay_s", 20)
         b, f_, tr = self.cfg["battery"], self.cfg.get("faults", {}), self.cfg.get("traffic", {})
         self.drain, self.charge_rate = b["drain_per_cell"], b["charge_rate_per_s"]
         self.low, self.resume = b["low_threshold"], b["resume_threshold"]
@@ -42,6 +75,7 @@ class Simulation:
         self.shift_len = self.cfg["shift"]["length_s"]
         self.time_scale = 1.0
         self.auto_orders = True
+        self.publisher = None              # set by the API process to mirror VDA 5050 traffic to Mosquitto
         self.reset(seed, allocator)
 
     # ------------------------------------------------------------ setup
@@ -60,19 +94,43 @@ class Simulation:
         self.traffic = TrafficManager()
         self.events = EventLog()
         self.bus = Bus()
+        self.bus.publisher = self.publisher
         self.adapters = build_adapters(self.cfg, self.bus)
         self.factory = OrderFactory(self.grid, self.cfg, self.rng)
         self.arrivals = ArrivalProcess(self.cfg, self.rng)
         self.stats = {"created": 0, "completed": 0, "started": 0, "wait_sum": 0.0, "cycle_sum": 0.0,
                       "mismatches": 0, "by_kind": {k: 0 for k in KINDS},
                       "collisions": 0, "deadlocks": 0, "permanent": 0, "faults": 0, "reassigned": 0,
-                      "evasions": 0, "traffic_delay": 0.0, "preempted": 0}
+                      "evasions": 0, "traffic_delay": 0.0, "preempted": 0,
+                      "completed_in_shift": 0, "operator": 0}
+        self.history: deque = deque(maxlen=720)          # one KPI sample per simulated minute (12 h)
+        self._next_sample = 0.0
+        self._done_times: deque = deque()                # completion times in the last hour (rolling throughput)
         self._qcaps: set = set()
         self._cycle_hits: dict = {}
         self.site_lock: dict = {}            # work cell -> order id (an order reserves all its work cells)
         self._poll_i = 0
         self._spawn_robots()
-        self.events.add(0, "info", "system", f"Shift started - seed {self.seed}, allocator {self.allocator.name}")
+        self._assign_bays()
+        self.events.add(0, "info", "system", f"Shift started - seed {self.seed}, allocator {self.allocator.name}, "
+                        + ("one TusCore manager for all vendors" if self.mode == "tuscore" else "separate manager per vendor"))
+
+    def _assign_bays(self):
+        """TusCore shares every charger. Separate managers: each vendor has its own dedicated chargers."""
+        self.bay_owner: dict = {c: None for c in self.grid.chargers}
+        if self.mode != "separate":
+            return
+        sep = self.cfg.get("separate_managers", {}).get("chargers_per_vendor")
+        types = [t for t, n in self.type_count.items() if n > 0]
+        bays = list(self.grid.chargers)
+        if sep:
+            order = [t for t in types for _ in range(int(sep.get(t, 1)))]
+        else:                                  # proportional, at least one each
+            order = list(types)
+            while len(order) < len(bays):
+                order.append(max(types, key=lambda t: self.type_count[t] / (1 + order.count(t))))
+        for c, t in zip(bays, order):
+            self.bay_owner[c] = t
 
     def _spawn_robots(self):
         z = self.cfg["zones"]["charging_area"]   # robots start parked in the charging area
@@ -112,6 +170,33 @@ class Simulation:
             self._tick_robot(r, dt)
         self._resolve_traffic()
         self._check_collisions()
+        if self.sim_time >= self._next_sample:
+            self._sample()
+            self._next_sample += 60.0
+
+    def _sample(self):
+        """One KPI sample per simulated minute - feeds the analytics charts."""
+        now = self.sim_time
+        while self._done_times and self._done_times[0] < now - 3600:
+            self._done_times.popleft()
+        busy, prev = {}, getattr(self, "_busy_prev", {})
+        span_s = max(1e-6, now - getattr(self, "_sample_prev", 0.0))
+        for r in self.robots.values():                 # share of the last minute each robot type was busy
+            b = busy.setdefault(r.rtype, [0.0, 0])
+            b[1] += 1
+            b[0] += (r.busy_time - prev.get(r.id, 0.0)) / span_s
+        self._busy_prev = {r.id: r.busy_time for r in self.robots.values()}
+        self._sample_prev = now
+        span = min(now, 3600.0) or 1.0
+        self.history.append({
+            "t": round(now), "completed": self.stats["completed"], "queued": len(self.queue),
+            "active": len(self.tasks) - len(self.queue),
+            "throughput": round(len(self._done_times) * 3600.0 / span, 1),
+            "busy": {k: round(min(100.0, 100 * v[0] / max(1, v[1]))) for k, v in busy.items()},
+            "battery": round(sum(r.battery for r in self.robots.values()) / max(1, len(self.robots)), 1),
+            "energy": round(sum(r.energy_kwh for r in self.robots.values()), 2),
+            "faulted": sum(1 for r in self.robots.values() if r.state == "fault"),
+        })
 
     def shift_over(self) -> bool:
         return self.sim_time >= self.shift_len and not self.tasks
@@ -131,7 +216,7 @@ class Simulation:
 
     # ------------------------------------------------------------ orders
     def add_order(self, kind: str, row=None, bay=None, at: float | None = None, manual=False):
-        t = self.factory.make(kind, self.sim_time if at is None else at, row, bay)
+        t = self.factory.make(kind, self.sim_time if at is None else at, row, bay, coordinated=self.mode == "tuscore")
         t.manual = manual
         self.tasks[t.id] = t
         bisect.insort(self.queue, t.id)
@@ -146,7 +231,8 @@ class Simulation:
         if not free:
             return
         # an order may only start if none of its work cells is reserved by another active order
-        queued = [self.tasks[i] for i in self.queue if self._sites_free(self.tasks[i])]
+        now = self.sim_time
+        queued = [self.tasks[i] for i in self.queue if self.tasks[i].not_before <= now and self._sites_free(self.tasks[i])]
         for tid, mapping in self.allocator.allocate(queued, free, self.sim_time).items():
             if self._sites_free(self.tasks[tid]):          # re-check: two orders in this round may clash
                 self._dispatch(self.tasks[tid], mapping)
@@ -288,6 +374,9 @@ class Simulation:
     def _action_done(self, r: Robot):
         t = self.tasks[r.task_id]
         t.done_actions += 1
+        label = r.plan[r.idx].label
+        if label in LOAD_AFTER:
+            r.load = LOAD_AFTER[label]
         r.idx += 1
         if r.idx < len(r.plan):
             self._begin_action(r)
@@ -302,9 +391,22 @@ class Simulation:
         t.status, t.finished = "done", self.sim_time
         self._unlock_sites(t)
         del self.tasks[t.id]
+        if t.then:
+            # Separate managers: the lift's manager reports "done"; the WMS notices and creates the
+            # tote job for the other vendor's manager after its polling/hand-over delay.
+            role, actions = t.then
+            nxt = Task(id=self.factory.new_id(), kind=t.kind, title=t.title + " (tote leg)", created=t.created,
+                       plans={role: actions}, counted=True, not_before=self.sim_time + self.wms_delay, leg=2)
+            nxt.manual = t.manual
+            self.tasks[nxt.id] = nxt
+            bisect.insort(self.queue, nxt.id)
+            return
         self.recent.appendleft(t)
         s = self.stats
         s["completed"] += 1
+        self._done_times.append(self.sim_time)
+        if t.finished <= self.shift_len:
+            s["completed_in_shift"] += 1
         s["cycle_sum"] += t.finished - t.created
         s["by_kind"][t.kind] += 1
         if t.mismatch:
@@ -320,6 +422,9 @@ class Simulation:
         in_cycle: set = set()
         for cyc in find_cycles({rid: r.blocked_by for rid, r in stuck.items()}):
             in_cycle.update(cyc)
+            if self.mode == "separate" and len({self.robots[i].rtype for i in cyc}) > 1:
+                self._operator_deadlock(cyc)          # no single manager can see this deadlock
+                continue
             # Escalation: if giving way keeps failing (e.g. two hand-overs hold each other's cells),
             # preempt - send the NEWEST order involved back to the queue so the older one can finish.
             key = frozenset(cyc)
@@ -354,8 +459,17 @@ class Simulation:
                 continue
             b = self.robots[r.blocked_by]
             if b.state in STATIONARY or not b.path:
-                if b.state == "idle" and b.task_id is None:
+                # TusCore can ask ANY idle robot to make way; a separate manager only its own robots -
+                # another vendor's parked robot stays until an operator moves it by hand.
+                if b.state == "idle" and b.task_id is None and (self.mode == "tuscore" or b.rtype == r.rtype):
                     self._evade(b, r)
+                elif b.state == "idle" and b.task_id is None and r.blocked_for >= self.operator_s:
+                    if self._evade(b, r):
+                        self.stats["operator"] += 1
+                        self.events.add(self.sim_time, "error", "operator",
+                                        f"Operator moved {b.id} out of {r.id}'s way after {r.blocked_for:.0f}s")
+                elif b.state == "idle" and b.task_id is None and r.blocked_for - r.replan_mark >= self.replan_s:
+                    self._replan(r, avoid_moving=False)
                 elif r.blocked_for - r.replan_mark >= self.replan_s:
                     self._replan(r, avoid_moving=False)
             elif r.blocked_for >= 30 and r.blocked_for - r.replan_mark >= 30:
@@ -364,6 +478,29 @@ class Simulation:
                 self.stats["permanent"] += 1
                 self.events.add(self.sim_time, "error", "watchdog", f"{r.id} stuck > {self.watchdog_s}s - forced fault")
                 self.inject_fault(r.id, "watchdog")
+
+    def _operator_deadlock(self, cyc: list):
+        """Separate managers: a deadlock between two vendors' robots is invisible to both managers.
+        It lasts until an operator notices and clears it manually (operator_response_s)."""
+        key = frozenset(cyc)
+        first, last = self._cycle_hits.get(key, (self.sim_time, self.sim_time))
+        if self.sim_time - last > 5:
+            first = self.sim_time
+        self._cycle_hits[key] = (first, self.sim_time)
+        if self.sim_time - first < self.operator_s:
+            return
+        self._cycle_hits.pop(key, None)
+        self.stats["operator"] += 1
+        self.stats["deadlocks"] += 1
+        for v in sorted((self.robots[i] for i in cyc), key=lambda r: (r.priority, r.id)):
+            if self._yield_way(v):
+                break
+        else:
+            involved = [self.tasks[self.robots[i].task_id] for i in cyc if self.robots[i].task_id in self.tasks]
+            if involved:
+                self._requeue(max(involved, key=lambda t: t.id), reason="deadlock")
+        self.events.add(self.sim_time, "error", "operator",
+                        f"Cross-vendor deadlock ({', '.join(cyc)}) cleared by an operator after {self.operator_s}s")
 
     def _yield_way(self, v: Robot) -> bool:
         """Give way: detour around everybody, else sidestep into a free neighbour cell."""
@@ -394,10 +531,10 @@ class Simulation:
         if path and path != r.path and path[0] not in occ:
             self._send_path(r, path, goal, "replan", r.state)
 
-    def _evade(self, b: Robot, blocked: Robot):
+    def _evade(self, b: Robot, blocked: Robot) -> bool:
         """An idle robot is in somebody's way: send it to the nearest free cell off that route."""
         if self.sim_time - b.last_evade < 5:
-            return
+            return False
         b.last_evade = self.sim_time
         keep_clear = set(blocked.path) | {blocked.cell}
         occ = self.traffic.occupied(b.id)
@@ -415,7 +552,7 @@ class Simulation:
                     break
                 q.append(n)
         if goal is None:
-            return
+            return False
         path = []
         while goal != b.cell:
             path.append(goal)
@@ -423,6 +560,7 @@ class Simulation:
         path.reverse()
         self._send_path(b, path, path[-1], "make way")
         self.stats["evasions"] += 1
+        return True
 
     def _check_collisions(self):
         seen = set()
@@ -482,6 +620,7 @@ class Simulation:
             if rr.task_id == t.id and rr.state != "fault":      # skip partners that already finished and moved on
                 self._stop(rr)
                 rr.clear_task()
+                rr.load = None
                 rr.state = "idle"
         self._unlock_sites(t)
         t.status, t.robots, t.started = "queued", {}, None
@@ -507,7 +646,7 @@ class Simulation:
         self._send_to_charge(r)
 
     def _send_to_charge(self, r: Robot):
-        free = [c for c, who in self.bays.items() if who is None]
+        free = [c for c, who in self.bays.items() if who is None and self.bay_owner.get(c) in (None, r.rtype)]
         if not free:
             return
         bay = min(free, key=lambda c: abs(c[0] - r.cell[0]) + abs(c[1] - r.cell[1]))
@@ -566,7 +705,26 @@ class Simulation:
             "collisions": s["collisions"], "deadlocks": s["deadlocks"], "permanent_deadlocks": s["permanent"],
             "faults": s["faults"], "reassigned": s["reassigned"], "preempted": s["preempted"], "evasions": s["evasions"],
             "traffic_delay_min": round(s["traffic_delay"] / 60.0, 1),
+            "completed_in_shift": s["completed_in_shift"], "operator_interventions": s["operator"],
+            "util_by_type": self._util_by_type(),
         }
+
+    def _util_by_type(self) -> dict:
+        out, span = {}, max(self.sim_time, 1.0)
+        for r in self.robots.values():
+            out.setdefault(r.rtype, []).append(r.busy_time / span)
+        return {k: round(100 * sum(v) / len(v), 1) for k, v in out.items()}
+
+    def report(self) -> dict:
+        """Shift report: fleet KPIs + per robot + per vendor (JSON; the API also serves CSV)."""
+        span = max(self.sim_time, 1.0)
+        robots = [{"id": r.id, "type": r.label, "vendor": r.vendor, "interface": r.interface,
+                   "busy_pct": round(100 * r.busy_time / span, 1), "distance_cells": int(r.dist),
+                   "energy_kwh": round(r.energy_kwh, 2), "battery_pct": round(r.battery, 1),
+                   "faults": r.fault_count, "state": r.state} for r in self.robots.values()]
+        return {"site": self.cfg.get("name"), "mode": self.mode, "allocator": self.allocator.name, "seed": self.seed,
+                "sim_time_h": round(self.sim_time / 3600, 2), "kpis": self.kpis(), "robots": robots,
+                "vendors": self.vendors()}
 
     def vendors(self) -> list:
         out = []
@@ -583,6 +741,7 @@ class Simulation:
         return {
             "t": round(now, 1), "scale": self.time_scale, "shift": self.shift_len,
             "auto_orders": self.auto_orders, "allocator": self.allocator.name, "seed": self.seed,
+            "mode": self.mode, "site": self.cfg.get("name"),
             "robots": [r.to_dict() for r in self.robots.values()],
             "tasks": live[:80], "recent": [t.to_dict(now) for t in list(self.recent)[:15]],
             "kpis": self.kpis(), "vendors": self.vendors(),

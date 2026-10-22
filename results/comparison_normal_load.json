@@ -1,0 +1,722 @@
+{
+ "kind": "comparison",
+ "meta": {
+  "labels": [
+   "A",
+   "B"
+  ],
+  "names": {
+   "A": "Separate manager per vendor",
+   "B": "TusCore (one manager)"
+  },
+  "runs": 10,
+  "shift_hours": 8.0,
+  "load_factor": 1.0,
+  "layout": "warehouse.yaml",
+  "assumptions": {
+   "operator_response_s": 90,
+   "wms_handoff_delay_s": 20,
+   "chargers_per_vendor": {
+    "tote_amr": 2,
+    "scissor_lift": 2,
+    "pallet_stacker": 1,
+    "drone": 1
+   }
+  }
+ },
+ "finished": "2026-10-22 08:48",
+ "seconds": 62.7,
+ "summary": {
+  "A": {
+   "completed": {
+    "mean": 1982.2,
+    "std": 38.18
+   },
+   "created": {
+    "mean": 1982.2,
+    "std": 38.18
+   },
+   "completed_in_shift": {
+    "mean": 1974.7,
+    "std": 39.28
+   },
+   "orders_per_hour": {
+    "mean": 246.62,
+    "std": 4.94
+   },
+   "avg_wait": {
+    "mean": 24.88,
+    "std": 3.5
+   },
+   "avg_cycle": {
+    "mean": 123.65,
+    "std": 4.47
+   },
+   "utilization": {
+    "mean": 52.95,
+    "std": 1.2
+   },
+   "energy_kwh": {
+    "mean": 42.78,
+    "std": 1.06
+   },
+   "collisions": {
+    "mean": 0.0,
+    "std": 0.0
+   },
+   "deadlocks": {
+    "mean": 115.5,
+    "std": 12.16
+   },
+   "permanent_deadlocks": {
+    "mean": 0.0,
+    "std": 0.0
+   },
+   "operator_interventions": {
+    "mean": 35.8,
+    "std": 7.3
+   },
+   "traffic_delay_min": {
+    "mean": 167.56,
+    "std": 19.83
+   },
+   "faults": {
+    "mean": 13.7,
+    "std": 1.68
+   },
+   "reassigned": {
+    "mean": 7.1,
+    "std": 2.62
+   }
+  },
+  "B": {
+   "completed": {
+    "mean": 1982.2,
+    "std": 38.18
+   },
+   "created": {
+    "mean": 1982.2,
+    "std": 38.18
+   },
+   "completed_in_shift": {
+    "mean": 1976.1,
+    "std": 39.47
+   },
+   "orders_per_hour": {
+    "mean": 246.75,
+    "std": 5.0
+   },
+   "avg_wait": {
+    "mean": 24.26,
+    "std": 3.19
+   },
+   "avg_cycle": {
+    "mean": 106.59,
+    "std": 3.66
+   },
+   "utilization": {
+    "mean": 52.4,
+    "std": 1.31
+   },
+   "energy_kwh": {
+    "mean": 42.72,
+    "std": 1.08
+   },
+   "collisions": {
+    "mean": 0.0,
+    "std": 0.0
+   },
+   "deadlocks": {
+    "mean": 136.2,
+    "std": 11.16
+   },
+   "permanent_deadlocks": {
+    "mean": 0.0,
+    "std": 0.0
+   },
+   "operator_interventions": {
+    "mean": 0.0,
+    "std": 0.0
+   },
+   "traffic_delay_min": {
+    "mean": 37.62,
+    "std": 2.19
+   },
+   "faults": {
+    "mean": 13.7,
+    "std": 1.68
+   },
+   "reassigned": {
+    "mean": 6.6,
+    "std": 2.37
+   }
+  }
+ },
+ "delta_pct": {
+  "completed": 0.0,
+  "created": 0.0,
+  "completed_in_shift": 0.1,
+  "orders_per_hour": 0.1,
+  "avg_wait": -2.5,
+  "avg_cycle": -13.8,
+  "utilization": -1.0,
+  "energy_kwh": -0.1,
+  "collisions": null,
+  "deadlocks": 17.9,
+  "permanent_deadlocks": null,
+  "operator_interventions": -100.0,
+  "traffic_delay_min": -77.5,
+  "faults": 0.0,
+  "reassigned": -7.0
+ },
+ "util_by_type": {
+  "A": {
+   "tote_amr": 81.3,
+   "scissor_lift": 19.2,
+   "pallet_stacker": 42.0,
+   "drone": 5.8
+  },
+  "B": {
+   "tote_amr": 79.7,
+   "scissor_lift": 20.3,
+   "pallet_stacker": 42.0,
+   "drone": 5.8
+  }
+ },
+ "runs": {
+  "A": [
+   {
+    "label": "A",
+    "mode": "separate",
+    "seed": 1,
+    "completed": 1958,
+    "created": 1958,
+    "completed_in_shift": 1952,
+    "orders_per_hour": 243.1,
+    "avg_wait": 23.7,
+    "avg_cycle": 121.7,
+    "utilization": 51.6,
+    "energy_kwh": 41.56,
+    "collisions": 0,
+    "deadlocks": 115,
+    "permanent_deadlocks": 0,
+    "operator_interventions": 33,
+    "traffic_delay_min": 171.5,
+    "faults": 12,
+    "reassigned": 9,
+    "util_by_type": {
+     "tote_amr": 79.9,
+     "scissor_lift": 19.3,
+     "pallet_stacker": 38.5,
+     "drone": 5.1
+    }
+   },
+   {
+    "label": "A",
+    "mode": "separate",
+    "seed": 2,
+    "completed": 2005,
+    "created": 2005,
+    "completed_in_shift": 1995,
+    "orders_per_hour": 249.7,
+    "avg_wait": 19.7,
+    "avg_cycle": 116.7,
+    "utilization": 53.0,
+    "energy_kwh": 43.25,
+    "collisions": 0,
+    "deadlocks": 112,
+    "permanent_deadlocks": 0,
+    "operator_interventions": 28,
+    "traffic_delay_min": 135.7,
+    "faults": 13,
+    "reassigned": 4,
+    "util_by_type": {
+     "tote_amr": 81.2,
+     "scissor_lift": 19.2,
+     "pallet_stacker": 42.8,
+     "drone": 5.3
+    }
+   },
+   {
+    "label": "A",
+    "mode": "separate",
+    "seed": 3,
+    "completed": 2007,
+    "created": 2007,
+    "completed_in_shift": 2003,
+    "orders_per_hour": 250.1,
+    "avg_wait": 28.5,
+    "avg_cycle": 128.8,
+    "utilization": 54.3,
+    "energy_kwh": 44.06,
+    "collisions": 0,
+    "deadlocks": 124,
+    "permanent_deadlocks": 0,
+    "operator_interventions": 27,
+    "traffic_delay_min": 156.3,
+    "faults": 15,
+    "reassigned": 9,
+    "util_by_type": {
+     "tote_amr": 82.7,
+     "scissor_lift": 20.1,
+     "pallet_stacker": 44.2,
+     "drone": 6.5
+    }
+   },
+   {
+    "label": "A",
+    "mode": "separate",
+    "seed": 4,
+    "completed": 1988,
+    "created": 1988,
+    "completed_in_shift": 1979,
+    "orders_per_hour": 247.3,
+    "avg_wait": 27.1,
+    "avg_cycle": 127.6,
+    "utilization": 53.7,
+    "energy_kwh": 43.48,
+    "collisions": 0,
+    "deadlocks": 116,
+    "permanent_deadlocks": 0,
+    "operator_interventions": 46,
+    "traffic_delay_min": 181.1,
+    "faults": 17,
+    "reassigned": 11,
+    "util_by_type": {
+     "tote_amr": 82.0,
+     "scissor_lift": 19.0,
+     "pallet_stacker": 45.0,
+     "drone": 6.1
+    }
+   },
+   {
+    "label": "A",
+    "mode": "separate",
+    "seed": 5,
+    "completed": 2067,
+    "created": 2067,
+    "completed_in_shift": 2059,
+    "orders_per_hour": 257.2,
+    "avg_wait": 31.5,
+    "avg_cycle": 131.1,
+    "utilization": 55.3,
+    "energy_kwh": 44.91,
+    "collisions": 0,
+    "deadlocks": 105,
+    "permanent_deadlocks": 0,
+    "operator_interventions": 34,
+    "traffic_delay_min": 158.4,
+    "faults": 15,
+    "reassigned": 4,
+    "util_by_type": {
+     "tote_amr": 84.8,
+     "scissor_lift": 20.6,
+     "pallet_stacker": 43.5,
+     "drone": 6.0
+    }
+   },
+   {
+    "label": "A",
+    "mode": "separate",
+    "seed": 6,
+    "completed": 1937,
+    "created": 1937,
+    "completed_in_shift": 1931,
+    "orders_per_hour": 241.5,
+    "avg_wait": 21.7,
+    "avg_cycle": 118.5,
+    "utilization": 51.3,
+    "energy_kwh": 41.51,
+    "collisions": 0,
+    "deadlocks": 105,
+    "permanent_deadlocks": 0,
+    "operator_interventions": 28,
+    "traffic_delay_min": 152.9,
+    "faults": 12,
+    "reassigned": 6,
+    "util_by_type": {
+     "tote_amr": 79.0,
+     "scissor_lift": 16.5,
+     "pallet_stacker": 42.7,
+     "drone": 6.1
+    }
+   },
+   {
+    "label": "A",
+    "mode": "separate",
+    "seed": 7,
+    "completed": 1952,
+    "created": 1952,
+    "completed_in_shift": 1941,
+    "orders_per_hour": 242.3,
+    "avg_wait": 25.0,
+    "avg_cycle": 125.6,
+    "utilization": 52.9,
+    "energy_kwh": 42.42,
+    "collisions": 0,
+    "deadlocks": 142,
+    "permanent_deadlocks": 0,
+    "operator_interventions": 48,
+    "traffic_delay_min": 210.2,
+    "faults": 15,
+    "reassigned": 10,
+    "util_by_type": {
+     "tote_amr": 80.5,
+     "scissor_lift": 19.6,
+     "pallet_stacker": 43.7,
+     "drone": 5.9
+    }
+   },
+   {
+    "label": "A",
+    "mode": "separate",
+    "seed": 8,
+    "completed": 1936,
+    "created": 1936,
+    "completed_in_shift": 1921,
+    "orders_per_hour": 240.2,
+    "avg_wait": 21.0,
+    "avg_cycle": 120.0,
+    "utilization": 51.7,
+    "energy_kwh": 41.95,
+    "collisions": 0,
+    "deadlocks": 96,
+    "permanent_deadlocks": 0,
+    "operator_interventions": 40,
+    "traffic_delay_min": 168.1,
+    "faults": 14,
+    "reassigned": 9,
+    "util_by_type": {
+     "tote_amr": 78.4,
+     "scissor_lift": 19.6,
+     "pallet_stacker": 42.1,
+     "drone": 6.4
+    }
+   },
+   {
+    "label": "A",
+    "mode": "separate",
+    "seed": 9,
+    "completed": 1970,
+    "created": 1970,
+    "completed_in_shift": 1967,
+    "orders_per_hour": 245.1,
+    "avg_wait": 23.4,
+    "avg_cycle": 121.5,
+    "utilization": 52.4,
+    "energy_kwh": 42.37,
+    "collisions": 0,
+    "deadlocks": 115,
+    "permanent_deadlocks": 0,
+    "operator_interventions": 32,
+    "traffic_delay_min": 155.6,
+    "faults": 12,
+    "reassigned": 5,
+    "util_by_type": {
+     "tote_amr": 80.9,
+     "scissor_lift": 18.3,
+     "pallet_stacker": 40.9,
+     "drone": 5.8
+    }
+   },
+   {
+    "label": "A",
+    "mode": "separate",
+    "seed": 10,
+    "completed": 2002,
+    "created": 2002,
+    "completed_in_shift": 1999,
+    "orders_per_hour": 249.7,
+    "avg_wait": 27.2,
+    "avg_cycle": 125.0,
+    "utilization": 53.3,
+    "energy_kwh": 42.28,
+    "collisions": 0,
+    "deadlocks": 125,
+    "permanent_deadlocks": 0,
+    "operator_interventions": 42,
+    "traffic_delay_min": 185.8,
+    "faults": 12,
+    "reassigned": 4,
+    "util_by_type": {
+     "tote_amr": 83.5,
+     "scissor_lift": 20.0,
+     "pallet_stacker": 36.8,
+     "drone": 4.9
+    }
+   }
+  ],
+  "B": [
+   {
+    "label": "B",
+    "mode": "tuscore",
+    "seed": 1,
+    "completed": 1958,
+    "created": 1958,
+    "completed_in_shift": 1953,
+    "orders_per_hour": 243.1,
+    "avg_wait": 19.8,
+    "avg_cycle": 100.8,
+    "utilization": 50.9,
+    "energy_kwh": 41.36,
+    "collisions": 0,
+    "deadlocks": 121,
+    "permanent_deadlocks": 0,
+    "operator_interventions": 0,
+    "traffic_delay_min": 40.1,
+    "faults": 12,
+    "reassigned": 8,
+    "util_by_type": {
+     "tote_amr": 78.0,
+     "scissor_lift": 20.1,
+     "pallet_stacker": 38.5,
+     "drone": 5.1
+    }
+   },
+   {
+    "label": "B",
+    "mode": "tuscore",
+    "seed": 2,
+    "completed": 2005,
+    "created": 2005,
+    "completed_in_shift": 1999,
+    "orders_per_hour": 249.8,
+    "avg_wait": 21.4,
+    "avg_cycle": 103.4,
+    "utilization": 53.2,
+    "energy_kwh": 43.31,
+    "collisions": 0,
+    "deadlocks": 126,
+    "permanent_deadlocks": 0,
+    "operator_interventions": 0,
+    "traffic_delay_min": 35.1,
+    "faults": 13,
+    "reassigned": 5,
+    "util_by_type": {
+     "tote_amr": 80.5,
+     "scissor_lift": 21.8,
+     "pallet_stacker": 42.8,
+     "drone": 5.3
+    }
+   },
+   {
+    "label": "B",
+    "mode": "tuscore",
+    "seed": 3,
+    "completed": 2007,
+    "created": 2007,
+    "completed_in_shift": 2002,
+    "orders_per_hour": 250.5,
+    "avg_wait": 25.7,
+    "avg_cycle": 109.2,
+    "utilization": 54.0,
+    "energy_kwh": 44.01,
+    "collisions": 0,
+    "deadlocks": 153,
+    "permanent_deadlocks": 0,
+    "operator_interventions": 0,
+    "traffic_delay_min": 41.6,
+    "faults": 15,
+    "reassigned": 9,
+    "util_by_type": {
+     "tote_amr": 81.8,
+     "scissor_lift": 21.0,
+     "pallet_stacker": 43.9,
+     "drone": 6.5
+    }
+   },
+   {
+    "label": "B",
+    "mode": "tuscore",
+    "seed": 4,
+    "completed": 1988,
+    "created": 1988,
+    "completed_in_shift": 1981,
+    "orders_per_hour": 247.5,
+    "avg_wait": 28.2,
+    "avg_cycle": 112.0,
+    "utilization": 53.4,
+    "energy_kwh": 43.68,
+    "collisions": 0,
+    "deadlocks": 134,
+    "permanent_deadlocks": 0,
+    "operator_interventions": 0,
+    "traffic_delay_min": 37.6,
+    "faults": 17,
+    "reassigned": 10,
+    "util_by_type": {
+     "tote_amr": 80.5,
+     "scissor_lift": 20.5,
+     "pallet_stacker": 45.0,
+     "drone": 6.1
+    }
+   },
+   {
+    "label": "B",
+    "mode": "tuscore",
+    "seed": 5,
+    "completed": 2067,
+    "created": 2067,
+    "completed_in_shift": 2061,
+    "orders_per_hour": 257.3,
+    "avg_wait": 30.6,
+    "avg_cycle": 113.0,
+    "utilization": 54.8,
+    "energy_kwh": 44.71,
+    "collisions": 0,
+    "deadlocks": 149,
+    "permanent_deadlocks": 0,
+    "operator_interventions": 0,
+    "traffic_delay_min": 39.4,
+    "faults": 15,
+    "reassigned": 4,
+    "util_by_type": {
+     "tote_amr": 83.4,
+     "scissor_lift": 21.5,
+     "pallet_stacker": 43.5,
+     "drone": 6.0
+    }
+   },
+   {
+    "label": "B",
+    "mode": "tuscore",
+    "seed": 6,
+    "completed": 1937,
+    "created": 1937,
+    "completed_in_shift": 1931,
+    "orders_per_hour": 241.5,
+    "avg_wait": 21.6,
+    "avg_cycle": 104.1,
+    "utilization": 50.9,
+    "energy_kwh": 41.58,
+    "collisions": 0,
+    "deadlocks": 135,
+    "permanent_deadlocks": 0,
+    "operator_interventions": 0,
+    "traffic_delay_min": 37.0,
+    "faults": 12,
+    "reassigned": 6,
+    "util_by_type": {
+     "tote_amr": 77.6,
+     "scissor_lift": 17.9,
+     "pallet_stacker": 42.6,
+     "drone": 6.1
+    }
+   },
+   {
+    "label": "B",
+    "mode": "tuscore",
+    "seed": 7,
+    "completed": 1952,
+    "created": 1952,
+    "completed_in_shift": 1942,
+    "orders_per_hour": 242.3,
+    "avg_wait": 22.7,
+    "avg_cycle": 105.2,
+    "utilization": 51.6,
+    "energy_kwh": 42.36,
+    "collisions": 0,
+    "deadlocks": 120,
+    "permanent_deadlocks": 0,
+    "operator_interventions": 0,
+    "traffic_delay_min": 38.9,
+    "faults": 15,
+    "reassigned": 9,
+    "util_by_type": {
+     "tote_amr": 77.6,
+     "scissor_lift": 20.0,
+     "pallet_stacker": 43.7,
+     "drone": 5.9
+    }
+   },
+   {
+    "label": "B",
+    "mode": "tuscore",
+    "seed": 8,
+    "completed": 1936,
+    "created": 1936,
+    "completed_in_shift": 1924,
+    "orders_per_hour": 240.1,
+    "avg_wait": 22.3,
+    "avg_cycle": 104.8,
+    "utilization": 51.1,
+    "energy_kwh": 41.82,
+    "collisions": 0,
+    "deadlocks": 143,
+    "permanent_deadlocks": 0,
+    "operator_interventions": 0,
+    "traffic_delay_min": 36.3,
+    "faults": 14,
+    "reassigned": 8,
+    "util_by_type": {
+     "tote_amr": 77.2,
+     "scissor_lift": 19.9,
+     "pallet_stacker": 42.1,
+     "drone": 6.4
+    }
+   },
+   {
+    "label": "B",
+    "mode": "tuscore",
+    "seed": 9,
+    "completed": 1970,
+    "created": 1970,
+    "completed_in_shift": 1967,
+    "orders_per_hour": 245.7,
+    "avg_wait": 25.8,
+    "avg_cycle": 107.7,
+    "utilization": 51.9,
+    "energy_kwh": 42.17,
+    "collisions": 0,
+    "deadlocks": 148,
+    "permanent_deadlocks": 0,
+    "operator_interventions": 0,
+    "traffic_delay_min": 35.4,
+    "faults": 12,
+    "reassigned": 3,
+    "util_by_type": {
+     "tote_amr": 79.2,
+     "scissor_lift": 19.7,
+     "pallet_stacker": 41.0,
+     "drone": 5.8
+    }
+   },
+   {
+    "label": "B",
+    "mode": "tuscore",
+    "seed": 10,
+    "completed": 2002,
+    "created": 2002,
+    "completed_in_shift": 2001,
+    "orders_per_hour": 249.7,
+    "avg_wait": 24.5,
+    "avg_cycle": 105.7,
+    "utilization": 52.2,
+    "energy_kwh": 42.16,
+    "collisions": 0,
+    "deadlocks": 133,
+    "permanent_deadlocks": 0,
+    "operator_interventions": 0,
+    "traffic_delay_min": 34.8,
+    "faults": 12,
+    "reassigned": 4,
+    "util_by_type": {
+     "tote_amr": 81.3,
+     "scissor_lift": 20.2,
+     "pallet_stacker": 36.8,
+     "drone": 4.9
+    }
+   }
+  ]
+ },
+ "lower_is_better": [
+  "avg_cycle",
+  "avg_wait",
+  "collisions",
+  "deadlocks",
+  "energy_kwh",
+  "operator_interventions",
+  "permanent_deadlocks",
+  "traffic_delay_min"
+ ]
+}

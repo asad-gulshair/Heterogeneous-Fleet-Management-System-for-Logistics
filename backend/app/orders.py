@@ -31,8 +31,16 @@ class OrderFactory:
         b = (x, s["y"] + s["h"] + 1)
         return row, bay, a, b
 
+    def new_id(self) -> int:
+        tid = self._next_id
+        self._next_id += 1
+        return tid
+
     # --- order builders ----------------------------------------------
-    def make(self, kind: str, now: float, row: int | None = None, bay: int | None = None) -> Task:
+    def make(self, kind: str, now: float, row: int | None = None, bay: int | None = None,
+             coordinated: bool = True) -> Task:
+        """coordinated=False models separate vendor managers: no synchronized hand-over; the lift
+        drops the tote at a transfer point and the tote job is created afterwards by the WMS."""
         d, tid = self.dwell, self._next_id
         self._next_id += 1
         if kind == "box_pick":
@@ -43,11 +51,15 @@ class OrderFactory:
         elif kind == "high_pick":
             row, bay, a, b = self._shelf_face(row, bay)
             pack = self._zone_cell(self.rng.choice(["packing_1", "packing_2"]))
-            plans = {  # scissor lift picks high, tote AMR meets it for the hand-over, then delivers
-                "high_pick": [Action(a, d["high_pick"], "pick high shelf"), Action(a, d["handoff"], "hand over", sync="handoff")],
-                "carry_tote": [Action(b, d["handoff"], "receive tote", sync="handoff"), Action(pack, d["drop"], "drop at packing")],
-            }
             title = f"High pick A{row + 1}-{bay + 1:02d}"
+            if coordinated:
+                plans = {  # scissor lift picks high, tote AMR meets it for the hand-over, then delivers
+                    "high_pick": [Action(a, d["high_pick"], "pick high shelf"), Action(a, d["handoff"], "hand over", sync="handoff")],
+                    "carry_tote": [Action(b, d["handoff"], "receive tote", sync="handoff"), Action(pack, d["drop"], "drop at packing")],
+                }
+            else:
+                plans = {"high_pick": [Action(a, d["high_pick"], "pick high shelf"), Action(a, d["handoff"], "place at transfer point")]}
+                then = ("carry_tote", [Action(b, d["handoff"], "collect tote"), Action(pack, d["drop"], "drop at packing")])
         elif kind == "pallet_move":
             src, dst = self._zone_cell("pallet_area"), self._zone_cell("loading_dock")
             plans = {"move_pallet": [Action(src, d["pallet_pick"], "lift pallet"), Action(dst, d["pallet_drop"], "set down at dock")]}
@@ -61,6 +73,8 @@ class OrderFactory:
         else:
             raise ValueError(f"unknown order kind: {kind}")
         t = Task(id=tid, kind=kind, title=title, created=now, plans=plans)
+        if kind == "high_pick" and not coordinated:
+            t.then = then
         if kind == "inventory_scan":
             t.mismatch = self.rng.random() < self.p_mismatch
         return t

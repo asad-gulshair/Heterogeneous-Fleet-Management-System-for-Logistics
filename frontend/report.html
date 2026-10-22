@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TusCore Shift Report</title>
+<link rel="icon" href="assets/tuscore-mark.svg">
+<style>
+  :root{--navy:#0A1A3C;--cyan:#2E9FE8;--ink:#13213f;--muted:#5d6f90;--line:#dfe6f2;--ok:#11875a;--bad:#c62f40}
+  *{box-sizing:border-box;margin:0}
+  body{background:#eef2f8;color:var(--ink);font:13px/1.5 Inter,"Segoe UI",system-ui,sans-serif;padding:28px 16px}
+  .sheet{max-width:960px;margin:0 auto;background:#fff;border-radius:12px;box-shadow:0 10px 30px rgba(10,26,60,.12);overflow:hidden}
+  .top{background:var(--navy);color:#fff;padding:22px 28px;display:flex;align-items:center;gap:14px}
+  .top img{width:34px}.top b{font-size:21px}.top b i{font-style:normal;color:var(--cyan)}.top .spacer{flex:1}
+  .top small{display:block;color:#9fb6dc;font-size:11px;letter-spacing:1.4px;text-transform:uppercase}
+  .bd{padding:22px 28px}
+  h2{font-size:12px;letter-spacing:1.5px;text-transform:uppercase;color:var(--cyan);margin:22px 0 10px}
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+  .k{border:1px solid var(--line);border-radius:10px;padding:10px 12px}.k label{color:var(--muted);font-size:10.5px;letter-spacing:1px;text-transform:uppercase}
+  .k div{font-size:21px;font-weight:750;font-variant-numeric:tabular-nums}
+  table{width:100%;border-collapse:collapse;font-size:12px}th{text-align:left;color:var(--muted);font-size:10.5px;letter-spacing:1px;text-transform:uppercase;border-bottom:2px solid var(--line);padding:6px 8px}
+  td{border-bottom:1px solid var(--line);padding:6px 8px;font-variant-numeric:tabular-nums}
+  .foot{display:flex;justify-content:space-between;color:var(--muted);font-size:11px;padding:14px 28px;border-top:1px solid var(--line)}
+  .btn{background:var(--cyan);color:#041225;border:0;border-radius:8px;padding:8px 14px;font-weight:700;cursor:pointer}
+  .meta{color:var(--muted)}
+  @media print{body{background:#fff;padding:0}.sheet{box-shadow:none;border-radius:0}.noprint{display:none}}
+  @media(max-width:700px){.kpis{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<div class="sheet">
+  <div class="top"><img src="assets/tuscore-mark.svg" alt=""><div><b>Tus<i>Core</i></b><small>Shift report</small></div><span class="spacer"></span>
+    <button class="btn noprint" onclick="print()">Print / save PDF</button></div>
+  <div class="bd">
+    <p class="meta" id="meta">Loading…</p>
+    <h2>Fleet KPIs</h2><div class="kpis" id="kpis"></div>
+    <h2>Safety &amp; reliability</h2><div class="kpis" id="safety"></div>
+    <h2>Vendors</h2><table id="vendors"></table>
+    <h2>Robots</h2><table id="robots"></table>
+  </div>
+  <div class="foot"><span>Generated from the TusCore digital twin (simulation)</span><span>Powered by Tusmec</span></div>
+</div>
+<script>
+fetch('/api/report').then(r => r.json()).then(R => {
+  const k = R.kpis, card = (l, v) => `<div class="k"><label>${l}</label><div>${v}</div></div>`;
+  document.getElementById('meta').textContent = `${R.site} · ${R.sim_time_h} h simulated · ${R.mode === 'tuscore' ? 'one TusCore manager' : 'separate vendor managers'} · allocator ${R.allocator} · seed ${R.seed} · printed ${new Date().toLocaleString()}`;
+  document.getElementById('kpis').innerHTML = card('Orders completed', `${k.completed} / ${k.created}`) + card('Throughput', k.orders_per_hour + ' /h') +
+    card('Average wait', k.avg_wait + ' s') + card('Average cycle', k.avg_cycle + ' s') + card('Utilization', k.utilization + ' %') + card('Energy', k.energy_kwh + ' kWh') +
+    card('Stock mismatches', k.mismatches) + card('Time lost to traffic', k.traffic_delay_min + ' min');
+  document.getElementById('safety').innerHTML = card('Collisions', k.collisions) + card('Deadlocks auto-resolved', k.deadlocks) + card('Permanent deadlocks', k.permanent_deadlocks) + card('Faults / reassigned', `${k.faults} / ${k.reassigned}`);
+  document.getElementById('vendors').innerHTML = '<tr><th>Vendor</th><th>Fleet</th><th>Protocol</th><th>Robots</th><th>Messages out / in</th><th>Status</th></tr>' +
+    R.vendors.map(v => `<tr><td>${v.vendor}</td><td>${v.label}</td><td>${v.protocol}</td><td>${v.robots}</td><td>${v.sent} / ${v.received}</td><td>${v.online ? 'online' : 'offline'}</td></tr>`).join('');
+  document.getElementById('robots').innerHTML = '<tr><th>Robot</th><th>Vendor</th><th>Busy</th><th>Distance</th><th>Energy</th><th>Battery</th><th>Faults</th><th>State</th></tr>' +
+    R.robots.map(r => `<tr><td>${r.id.replace(/_/g, ' ')}</td><td>${r.vendor}</td><td>${r.busy_pct} %</td><td>${r.distance_cells} m</td><td>${r.energy_kwh} kWh</td><td>${r.battery_pct} %</td><td>${r.faults}</td><td>${r.state}</td></tr>`).join('');
+});
+</script>
+</body>
+</html>

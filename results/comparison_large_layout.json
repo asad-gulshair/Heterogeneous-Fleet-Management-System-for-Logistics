@@ -1,0 +1,358 @@
+{
+ "kind": "comparison",
+ "meta": {
+  "labels": [
+   "A",
+   "B"
+  ],
+  "names": {
+   "A": "Separate manager per vendor",
+   "B": "TusCore (one manager)"
+  },
+  "runs": 3,
+  "shift_hours": 8.0,
+  "load_factor": 1.0,
+  "layout": "warehouse_large.yaml",
+  "assumptions": {
+   "operator_response_s": 90,
+   "wms_handoff_delay_s": 20,
+   "chargers_per_vendor": {
+    "tote_amr": 2,
+    "scissor_lift": 2,
+    "pallet_stacker": 1,
+    "drone": 1
+   }
+  }
+ },
+ "finished": "2026-10-22 09:12",
+ "seconds": 27.9,
+ "summary": {
+  "A": {
+   "completed": {
+    "mean": 2238.67,
+    "std": 28.59
+   },
+   "created": {
+    "mean": 2238.67,
+    "std": 28.59
+   },
+   "completed_in_shift": {
+    "mean": 2228.67,
+    "std": 30.64
+   },
+   "orders_per_hour": {
+    "mean": 278.17,
+    "std": 3.39
+   },
+   "avg_wait": {
+    "mean": 10.07,
+    "std": 0.85
+   },
+   "avg_cycle": {
+    "mean": 130.97,
+    "std": 1.76
+   },
+   "utilization": {
+    "mean": 47.5,
+    "std": 0.64
+   },
+   "energy_kwh": {
+    "mean": 63.45,
+    "std": 0.83
+   },
+   "collisions": {
+    "mean": 0.0,
+    "std": 0.0
+   },
+   "deadlocks": {
+    "mean": 97.67,
+    "std": 10.08
+   },
+   "permanent_deadlocks": {
+    "mean": 0.0,
+    "std": 0.0
+   },
+   "operator_interventions": {
+    "mean": 28.33,
+    "std": 7.41
+   },
+   "traffic_delay_min": {
+    "mean": 167.23,
+    "std": 38.01
+   },
+   "faults": {
+    "mean": 26.67,
+    "std": 4.03
+   },
+   "reassigned": {
+    "mean": 13.0,
+    "std": 2.16
+   }
+  },
+  "B": {
+   "completed": {
+    "mean": 2238.67,
+    "std": 28.59
+   },
+   "created": {
+    "mean": 2238.67,
+    "std": 28.59
+   },
+   "completed_in_shift": {
+    "mean": 2229.0,
+    "std": 30.24
+   },
+   "orders_per_hour": {
+    "mean": 278.5,
+    "std": 3.68
+   },
+   "avg_wait": {
+    "mean": 10.97,
+    "std": 0.79
+   },
+   "avg_cycle": {
+    "mean": 117.07,
+    "std": 1.19
+   },
+   "utilization": {
+    "mean": 47.83,
+    "std": 0.83
+   },
+   "energy_kwh": {
+    "mean": 63.57,
+    "std": 1.02
+   },
+   "collisions": {
+    "mean": 0.0,
+    "std": 0.0
+   },
+   "deadlocks": {
+    "mean": 139.67,
+    "std": 4.19
+   },
+   "permanent_deadlocks": {
+    "mean": 0.0,
+    "std": 0.0
+   },
+   "operator_interventions": {
+    "mean": 0.0,
+    "std": 0.0
+   },
+   "traffic_delay_min": {
+    "mean": 47.0,
+    "std": 2.26
+   },
+   "faults": {
+    "mean": 26.67,
+    "std": 4.03
+   },
+   "reassigned": {
+    "mean": 12.0,
+    "std": 6.16
+   }
+  }
+ },
+ "delta_pct": {
+  "completed": 0.0,
+  "created": 0.0,
+  "completed_in_shift": 0.0,
+  "orders_per_hour": 0.1,
+  "avg_wait": 8.9,
+  "avg_cycle": -10.6,
+  "utilization": 0.7,
+  "energy_kwh": 0.2,
+  "collisions": null,
+  "deadlocks": 43.0,
+  "permanent_deadlocks": null,
+  "operator_interventions": -100.0,
+  "traffic_delay_min": -71.9,
+  "faults": 0.0,
+  "reassigned": -7.7
+ },
+ "util_by_type": {
+  "A": {
+   "tote_amr": 69.0,
+   "scissor_lift": 18.0,
+   "pallet_stacker": 43.4,
+   "drone": 5.0
+  },
+  "B": {
+   "tote_amr": 68.4,
+   "scissor_lift": 21.0,
+   "pallet_stacker": 43.6,
+   "drone": 5.0
+  }
+ },
+ "runs": {
+  "A": [
+   {
+    "label": "A",
+    "mode": "separate",
+    "seed": 1,
+    "completed": 2203,
+    "created": 2203,
+    "completed_in_shift": 2192,
+    "orders_per_hour": 273.9,
+    "avg_wait": 8.9,
+    "avg_cycle": 128.8,
+    "utilization": 46.6,
+    "energy_kwh": 63.18,
+    "collisions": 0,
+    "deadlocks": 101,
+    "permanent_deadlocks": 0,
+    "operator_interventions": 27,
+    "traffic_delay_min": 143.0,
+    "faults": 29,
+    "reassigned": 14,
+    "util_by_type": {
+     "tote_amr": 66.2,
+     "scissor_lift": 17.2,
+     "pallet_stacker": 48.0,
+     "drone": 4.6
+    }
+   },
+   {
+    "label": "A",
+    "mode": "separate",
+    "seed": 2,
+    "completed": 2273,
+    "created": 2273,
+    "completed_in_shift": 2267,
+    "orders_per_hour": 282.2,
+    "avg_wait": 10.4,
+    "avg_cycle": 131.0,
+    "utilization": 48.0,
+    "energy_kwh": 64.57,
+    "collisions": 0,
+    "deadlocks": 84,
+    "permanent_deadlocks": 0,
+    "operator_interventions": 20,
+    "traffic_delay_min": 137.8,
+    "faults": 21,
+    "reassigned": 10,
+    "util_by_type": {
+     "tote_amr": 70.1,
+     "scissor_lift": 17.0,
+     "pallet_stacker": 43.8,
+     "drone": 6.1
+    }
+   },
+   {
+    "label": "A",
+    "mode": "separate",
+    "seed": 3,
+    "completed": 2240,
+    "created": 2240,
+    "completed_in_shift": 2227,
+    "orders_per_hour": 278.4,
+    "avg_wait": 10.9,
+    "avg_cycle": 133.1,
+    "utilization": 47.9,
+    "energy_kwh": 62.59,
+    "collisions": 0,
+    "deadlocks": 108,
+    "permanent_deadlocks": 0,
+    "operator_interventions": 38,
+    "traffic_delay_min": 220.9,
+    "faults": 30,
+    "reassigned": 15,
+    "util_by_type": {
+     "tote_amr": 70.6,
+     "scissor_lift": 19.9,
+     "pallet_stacker": 38.5,
+     "drone": 4.3
+    }
+   }
+  ],
+  "B": [
+   {
+    "label": "B",
+    "mode": "tuscore",
+    "seed": 1,
+    "completed": 2203,
+    "created": 2203,
+    "completed_in_shift": 2193,
+    "orders_per_hour": 273.9,
+    "avg_wait": 9.9,
+    "avg_cycle": 116.6,
+    "utilization": 47.1,
+    "energy_kwh": 63.4,
+    "collisions": 0,
+    "deadlocks": 141,
+    "permanent_deadlocks": 0,
+    "operator_interventions": 0,
+    "traffic_delay_min": 48.7,
+    "faults": 29,
+    "reassigned": 13,
+    "util_by_type": {
+     "tote_amr": 66.3,
+     "scissor_lift": 19.6,
+     "pallet_stacker": 48.1,
+     "drone": 4.6
+    }
+   },
+   {
+    "label": "B",
+    "mode": "tuscore",
+    "seed": 2,
+    "completed": 2273,
+    "created": 2273,
+    "completed_in_shift": 2267,
+    "orders_per_hour": 282.9,
+    "avg_wait": 11.8,
+    "avg_cycle": 118.7,
+    "utilization": 49.0,
+    "energy_kwh": 64.89,
+    "collisions": 0,
+    "deadlocks": 144,
+    "permanent_deadlocks": 0,
+    "operator_interventions": 0,
+    "traffic_delay_min": 43.8,
+    "faults": 21,
+    "reassigned": 4,
+    "util_by_type": {
+     "tote_amr": 70.1,
+     "scissor_lift": 21.7,
+     "pallet_stacker": 43.9,
+     "drone": 6.1
+    }
+   },
+   {
+    "label": "B",
+    "mode": "tuscore",
+    "seed": 3,
+    "completed": 2240,
+    "created": 2240,
+    "completed_in_shift": 2227,
+    "orders_per_hour": 278.7,
+    "avg_wait": 11.2,
+    "avg_cycle": 115.9,
+    "utilization": 47.4,
+    "energy_kwh": 62.42,
+    "collisions": 0,
+    "deadlocks": 134,
+    "permanent_deadlocks": 0,
+    "operator_interventions": 0,
+    "traffic_delay_min": 48.5,
+    "faults": 30,
+    "reassigned": 19,
+    "util_by_type": {
+     "tote_amr": 68.9,
+     "scissor_lift": 21.6,
+     "pallet_stacker": 38.8,
+     "drone": 4.3
+    }
+   }
+  ]
+ },
+ "lower_is_better": [
+  "avg_cycle",
+  "avg_wait",
+  "collisions",
+  "deadlocks",
+  "energy_kwh",
+  "operator_interventions",
+  "permanent_deadlocks",
+  "traffic_delay_min"
+ ]
+}

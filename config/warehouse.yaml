@@ -109,3 +109,10 @@ traffic:
   block_s: 0.5              # a robot waiting this long for a cell is "stuck" and checked for deadlock
   replan_s: 3.0             # re-plan around standing robots after this long
   watchdog_s: 300           # safety net: a robot stuck this long is declared faulted (should never happen)
+
+# Scenario A of the comparison: every vendor runs its OWN fleet manager (today's typical setup).
+# These are modelling assumptions - change them and re-run the comparison.
+separate_managers:
+  operator_response_s: 90       # a cross-vendor deadlock is invisible to both managers until an operator clears it
+  wms_handoff_delay_s: 20       # lift done -> WMS notices -> creates the tote job in the other vendor's manager
+  chargers_per_vendor: {tote_amr: 2, scissor_lift: 2, pallet_stacker: 1, drone: 1}   # dedicated chargers

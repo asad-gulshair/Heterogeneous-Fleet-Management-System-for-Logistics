@@ -49,3 +49,28 @@ Note: the Phase 2 numbers above were measured *before* traffic control, faults a
 ### Verified (headless 8-hour shifts, high load 190 box + 50 high picks/h, ~15 random faults per shift)
 12 runs (6 seeds x greedy/Hungarian): every order completed, **0 collisions, 0 permanent deadlocks**.
 Honest finding: with real traffic, the allocator (greedy vs Hungarian) changes average wait only a few percent - the bottleneck is robot count and congestion, not assignment. The headline for clients is the Phase 4 comparison of separate vendor managers vs one TusCore.
+
+## Phase 4 - Dashboard, comparison and handover
+1. **Scenario A - separate vendor managers** (`sim.mode = "separate"`). Modelled, not assumed: each vendor's manager only sees its own robots, so
+   - a deadlock between two vendors' robots is invisible to both managers -> it lasts until an operator clears it (`operator_response_s`, 90 s);
+   - another vendor's idle robot standing in the way cannot be asked to move -> operator moves it after the same delay;
+   - a high-shelf pick becomes two separate jobs: the lift's manager reports "done", the WMS notices and creates the tote job `wms_handoff_delay_s` (20 s) later - no synchronized hand-over;
+   - each vendor has dedicated chargers (`chargers_per_vendor`).
+   Everything else (A*, cell reservation inside one vendor's fleet, allocation algorithm, the orders, the faults) is identical, so the comparison isolates the effect of *coordination*.
+2. **Fair experiments** (`experiments.py`): both scenarios use the same seeds -> identical orders and identical fault times. Runs execute in parallel worker processes (never touching the live twin). Results are saved in `results/` and shown on the Compare page with mean ± standard deviation.
+3. **Result** (busy day x1.15, 10 x 8 h each): cycle time -22 %, wait -16 %, time lost to traffic -79 %, operator interventions 46 -> 0, zero collisions in both. Normal day: cycle -14 %, traffic -78 %. Peak x1.3: both setups saturate (waits ~18 min) - TusCore still completes +1.7 % more orders and is 18 % faster per order. Large layout (19 robots, 3 runs): cycle -11 %, traffic -72 %, wait +9 % (small sample) - reported as measured.
+   Honest reading: throughput is equal whenever demand is below fleet capacity; TusCore's value is speed, smoothness and no manual intervention, and extra capacity only at saturation.
+4. **What-if** (`apply_overrides`): robot counts per type, order rates / volume factor, number of chargers, layout file. Baseline and scenario run with the same seeds. The ROI card turns the KPI deltas into extra orders and robot hours per year vs the extra robot investment (all inputs editable).
+5. **KPI history**: one sample per simulated minute (rolling throughput, queue, utilization per type from busy-time deltas, battery, faulted robots) -> Analytics charts.
+6. **Shift report**: `/api/report` (JSON), `/api/report.csv`, and a printable branded page `report.html` (print -> PDF).
+7. **Real MQTT**: `mqtt_bridge.py` publishes every VDA 5050 order/state message on its real topic (`uagv/v2/<manufacturer>/<serial>/order|state`) when `MQTT_HOST` is set. Verified against a live broker (62 messages in a short run). `docker-compose.yml` starts Eclipse Mosquitto next to TusCore.
+8. **3D digital twin** (`frontend/js/twin3d.js`, Three.js, bundled locally): racks with stock, pallet area, packing stations, chargers, dock doors. Each robot type is its own animated model - the scissor lift raises its platform to the high shelf and lowers it for the hand-over, the pallet stacker lifts pallets on its forks, the tote AMR carries a bin, the drone takes off, spins its rotors and shows a scan beam over the racks. Floating vendor markers keep every robot readable from far away; red beacon = fault, amber = waiting for traffic. Orbit / top / follow / auto-orbit cameras.
+9. **Console structure**: `index.html` + `css/app.css` + ES modules (`app.js` live data and panels, `plan2d.js`, `twin3d.js`, `pages.js`). The robot list updates in place (no re-render), so buttons are never replaced while being clicked.
+
+### Suggested 3-5 minute demo video
+1. (0:00) Live 3D twin at 10x - "12 robots, 4 vendors, 4 protocols, one TusCore". Orbit, then follow the scissor lift during a high-shelf pick and hand-over.
+2. (0:45) Protocol tab - the same core speaking VDA 5050, REST, TCP/JSON and MAVLink-style.
+3. (1:15) Inject a fault on a busy robot - beacon turns red, order is reassigned (Events tab). Simulate a vendor outage.
+4. (2:00) Click the mode pill -> separate managers: watch congestion and operator interventions grow.
+5. (2:40) Compare page - headline numbers. What-if: add two tote AMRs at peak volume -> ROI and payback.
+6. (3:40) API page + `/docs`: "any WMS can submit orders". Close on the shift report.

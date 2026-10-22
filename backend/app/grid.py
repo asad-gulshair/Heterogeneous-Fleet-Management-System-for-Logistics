@@ -20,7 +20,10 @@ class Grid:
         self.chargers: list[tuple[int, int]] = []
         z = self.zones.get("charging_area")
         if z:
-            self.chargers = [(x, z["y"] + z["h"] - 1) for x in range(z["x"] + 1, z["x"] + z["w"] - 1, 2)]
+            cand = [(x, y) for y in range(z["y"] + z["h"] - 1, z["y"] - 1, -2)          # bottom row first
+                    for x in range(z["x"] + 1, z["x"] + z["w"] - 1, 2)]
+            n = cfg.get("charging_bays", len([c for c in cand if c[1] == z["y"] + z["h"] - 1]))
+            self.chargers = cand[:max(1, min(n, len(cand)))]
 
     def in_bounds(self, x: int, y: int) -> bool:
         return 0 <= x < self.width and 0 <= y < self.height

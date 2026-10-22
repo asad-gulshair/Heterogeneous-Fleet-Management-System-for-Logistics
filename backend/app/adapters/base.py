@@ -28,11 +28,14 @@ class Bus:
     def __init__(self, maxlen: int = 400):
         self.buf: deque = deque(maxlen=maxlen)
         self.seq = 0
+        self.publisher = None          # optional callable(topic, payload) -> real MQTT broker
 
     def log(self, t: float, vendor: str, vendor_name: str, w: Wire):
         self.seq += 1
         self.buf.appendleft({"id": self.seq, "t": round(t, 1), "vendor": vendor, "vendor_name": vendor_name,
                              "proto": w.proto, "dir": w.direction, "topic": w.topic, "body": w.text()[:900]})
+        if self.publisher is not None and w.proto.startswith("VDA 5050"):
+            self.publisher(w.topic, w.text())
 
     def recent(self, n: int = 40, vendor: str | None = None) -> list:
         out = [m for m in self.buf if vendor is None or m["vendor"] == vendor]

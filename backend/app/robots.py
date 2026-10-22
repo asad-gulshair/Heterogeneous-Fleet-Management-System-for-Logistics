@@ -39,6 +39,7 @@ class Robot:
     repair_at: float = 0.0
     fault_count: int = 0
     telemetry: dict = field(default_factory=dict)   # last state decoded by the vendor adapter
+    load: str | None = None                    # what it carries: tote | pallet | None (drives the 3D view)
     # --- statistics ---
     busy_time: float = 0.0
     energy_kwh: float = 0.0
@@ -80,5 +81,5 @@ class Robot:
             "dist": round(self.dist, 1),
             "task": self.task_id, "action": self.action,
             "priority": self.priority, "blocked_for": round(self.blocked_for, 1), "blocked_by": self.blocked_by,
-            "faults": self.fault_count, "tel": self.telemetry,
+            "faults": self.fault_count, "tel": self.telemetry, "load": self.load,
         }

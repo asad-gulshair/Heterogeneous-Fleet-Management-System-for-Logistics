@@ -66,3 +66,44 @@ def test_fault_returns_order_to_queue_and_it_still_completes():
     for _ in range(4000):
         sim._step(0.5)
     assert sim.kpis()["completed"] >= 1
+
+
+def test_separate_managers_mode_runs_safely_and_splits_handoff():
+    sim = Simulation(CFG, seed=4, mode="separate", overrides={"shift_hours": 1})
+    k = sim.run_headless()
+    assert k["collisions"] == 0 and k["completed"] == k["created"] > 100
+    # dedicated chargers per vendor
+    assert set(sim.bay_owner.values()) == set(sim.type_count)
+
+
+def test_large_layout_loads_from_yaml_only():
+    big = os.path.join(os.path.dirname(CFG), "warehouse_large.yaml")
+    sim = Simulation(big, seed=2, overrides={"shift_hours": 0.5})
+    assert sim.grid.width == 80 and len(sim.robots) == 19
+    k = sim.run_headless()
+    assert k["collisions"] == 0 and k["completed"] == k["created"]
+
+
+def test_whatif_overrides_apply():
+    sim = Simulation(CFG, overrides={"robot_counts": {"tote_amr": 9}, "load_factor": 2.0, "charging_bays": 4})
+    assert sum(1 for r in sim.robots.values() if r.rtype == "tote_amr") == 9
+    assert sim.cfg["orders"]["rate_per_hour"]["box_pick"] == 340
+    assert len(sim.grid.chargers) == 4
+
+
+def test_api_end_to_end_single_control_point():
+    from fastapi.testclient import TestClient
+    from app import main
+    c = TestClient(main.app)
+    c.post("/api/sim/auto-orders", json={"enabled": False})
+    c.post("/api/sim/reset", json={"seed": 7})
+    for kind in ("box_pick", "high_pick", "pallet_move", "inventory_scan"):
+        assert c.post("/api/orders", json={"kind": kind}).status_code == 201
+    for _ in range(1200):
+        main.sim._step(0.5)
+    k = c.get("/api/kpis").json()
+    assert k["completed"] == 4 and k["collisions"] == 0
+    assert c.get("/api/report.csv").status_code == 200
+    assert len(c.get("/api/layouts").json()) >= 2
+    assert c.post("/api/sim/mode", json={"mode": "separate"}).json()["mode"] == "separate"
+    assert c.post("/api/sim/mode", json={"mode": "tuscore"}).json()["mode"] == "tuscore"

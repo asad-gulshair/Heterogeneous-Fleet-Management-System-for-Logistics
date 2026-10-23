@@ -3,10 +3,22 @@ import { Plan2D } from './plan2d.js';
 import { initPages, showPage } from './pages.js';
 
 export const $ = id => document.getElementById(id);
+// Small notice in the corner - used for errors (and confirmations) so nothing fails silently.
+export function toast(msg, ok = false) {
+  const t = document.getElementById('toast'); if (!t) return;
+  t.textContent = msg; t.className = 'toast' + (ok ? ' ok' : ''); t.style.display = 'block';
+  clearTimeout(toast._h); toast._h = setTimeout(() => { t.style.display = 'none'; }, 4000);
+}
+async function failText(r) { try { const j = await r.json(); return typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail); } catch { return r.statusText; } }
 export const api = {
   get: async u => { const r = await fetch(u); if (!r.ok) throw new Error(`${u}: ${r.status}`); return r.json(); },
-  post: async (u, b = {}) => { const r = await fetch(u, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }); if (!r.ok) throw new Error(`${u}: ${r.status}`); return r.json(); },
+  post: async (u, b = {}) => {
+    const r = await fetch(u, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) });
+    if (!r.ok) { const m = await failText(r); toast('Not possible: ' + m); throw new Error(m); }
+    return r.json();
+  },
 };
+const PAGES = ['ops', 'overview', 'analytics', 'compare', 'whatif', 'integration'];
 export const S = { MAP: null, SNAP: null, sel: null, tab: 'robots', view: '3d', twin: null, plan: null, page: 'ops', listeners: [] };
 export const fmtT = t => { t = Math.floor(t); return [t / 3600, t % 3600 / 60, t % 60].map(v => String(Math.floor(v)).padStart(2, '0')).join(':'); };
 export const fmtDur = x => { x = Math.round(x || 0); return x < 60 ? x + 's' : x < 3600 ? Math.floor(x / 60) + 'm ' + String(x % 60).padStart(2, '0') + 's' : (x / 3600).toFixed(1) + 'h'; };
@@ -19,7 +31,7 @@ const GLYPH = {
   pallet_stacker: '<svg width="16" height="16" viewBox="0 0 16 16"><path d="M2 12h12M4 12V6h5v6M11 12V9" stroke="#fff" stroke-width="1.5" fill="none"/></svg>',
   drone: '<svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2" fill="#fff"/><path d="M3 3l3 3M13 3l-3 3M3 13l3-3M13 13l-3-3" stroke="#fff" stroke-width="1.4"/></svg>',
 };
-const glyph = t => GLYPH[t] || GLYPH.tote_amr;
+export const glyph = t => GLYPH[t] || GLYPH.tote_amr;
 const nice = id => id.replace(/_/g, ' ');
 
 // ------------------------------------------------------------------ boot
@@ -35,8 +47,9 @@ async function loadMap() {
   S.MAP = await api.get('/api/map');
   $('legend').innerHTML = Object.values(S.MAP.types).map(t => `<span><i style="background:${t.color}"></i>${t.label}</span>`).join('');
   const lays = await api.get('/api/layouts');
-  $('layoutSel').innerHTML = lays.map(l => `<option value="${l.file}" ${l.active ? 'selected' : ''}>${l.name} · ${l.width}×${l.height} · ${l.robots} robots</option>`).join('');
+  $('layoutSel').innerHTML = lays.map(l => `<option value="${l.file}" ${l.active ? 'selected' : ''} title="${l.width}×${l.height} m · ${l.robots} robots">${l.name} · ${l.robots} robots</option>`).join('');
   S.layouts = lays;
+  S.closedKey = null;
   buildViews();
   S.listeners.forEach(f => f('map'));
 }
@@ -60,7 +73,7 @@ function applyView() {
   $('view3d').style.display = is3d ? 'block' : 'none';
   $('plan2d').style.display = is3d ? 'none' : 'flex';
   $('camctl').style.display = is3d ? 'flex' : 'none';
-  $('twinHint').textContent = is3d ? 'Drag to orbit · right-drag to pan · scroll to zoom · click a robot' : 'Click a robot to inspect · click the floor to send an idle robot';
+  $('twinHint').textContent = is3d ? 'Drag to orbit · right-drag to pan · scroll to zoom · click a robot' : 'Click a robot to inspect · click the floor to send an idle robot there';
   if (S.twin) { S.twin.active = is3d && S.page === 'ops'; if (is3d) S.twin.resize(); }
   if (S.plan) { S.plan.active = !is3d && S.page === 'ops'; if (!is3d) S.plan.resize(); }
   document.querySelectorAll('#viewSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === (is3d ? '3d' : '2d')));
@@ -75,7 +88,7 @@ function connect() {
 
 function route() {
   const p = (location.hash || '#ops').slice(1);
-  S.page = ['ops', 'analytics', 'compare', 'whatif', 'integration'].includes(p) ? p : 'ops';
+  S.page = PAGES.includes(p) ? p : 'ops';
   document.querySelectorAll('#nav button').forEach(b => b.classList.toggle('on', b.dataset.p === S.page));
   document.querySelectorAll('.page').forEach(s => s.classList.toggle('on', s.id === 'p-' + S.page));
   applyView(); showPage(S.page);
@@ -90,16 +103,24 @@ function onSnap() {
   $('livetxt').textContent = `Live · ${on}/${n}`;
   const sep = D.mode === 'separate';
   $('modePill').className = 'pill ' + (sep ? 'mode-s' : 'mode-t');
-  $('modePill').textContent = sep ? 'Separate managers · per vendor' : 'TusCore · one manager';
+  $('modeTxt').textContent = sep ? 'Separate managers' : 'TusCore · one manager';
+  $('pauseBar').style.display = D.paused ? 'flex' : 'none';
+  $('pauseBtn').textContent = D.paused ? 'Resume fleet' : 'Pause fleet';
+  $('pauseBtn').classList.toggle('danger', !D.paused);
+  const nA = (D.alerts || []).length, badge = $('navAlerts'); badge.textContent = nA; badge.style.display = nA ? 'block' : 'none';
+  const ck = (D.closed_rows || []).join(',');
+  if (ck !== S.closedKey) { S.closedKey = ck; buildAisleSel(D.closed_rows || []); }
   $('modeBanner').style.display = sep ? 'block' : 'none';
   $('k_done').innerHTML = `${k.completed}<small>/ ${k.created}</small>`;
-  $('k_donesub').textContent = `${k.queued} queued · ${k.active} active`;
+  $('k_donesub').textContent = `${k.on_time_pct}% on time · ${k.queued} queued · ${k.active} active`;
   $('k_oph').innerHTML = `${k.orders_per_hour}<small>orders/h</small>`;
   $('k_ophsub').textContent = `Box ${k.by_kind.box_pick} · High ${k.by_kind.high_pick} · Pallet ${k.by_kind.pallet_move} · Scan ${k.by_kind.inventory_scan}`;
   $('k_wait').innerHTML = `${Math.round(k.avg_wait)}<small>s</small>`;
   $('k_waitsub').textContent = 'avg cycle ' + fmtDur(k.avg_cycle);
   $('k_util').innerHTML = `${Math.round(k.utilization)}<small>%</small>`;
-  $('k_utilsub').textContent = Object.entries(k.util_by_type || {}).map(([t, v]) => `${S.MAP.types[t] ? S.MAP.types[t].label.split(' ')[0] : t} ${Math.round(v)}%`).join(' · ');
+  const busyNow = R.filter(r => ['moving', 'working', 'waiting'].includes(r.state)).length;
+  $('k_utilsub').textContent = `${busyNow} of ${n} robots busy right now`;
+  $('k_util').title = Object.entries(k.util_by_type || {}).map(([t, v]) => `${S.MAP.types[t] ? S.MAP.types[t].label : t}: ${Math.round(v)}%`).join('\n');
   $('k_en').innerHTML = `${k.energy_kwh}<small>kWh</small>`;
   $('k_ensub').textContent = `${k.mismatches} stock mismatches flagged`;
   const sf = (v, l, cls = '') => `<div class="sf"><i class="${cls}"></i><b>${v}</b><span>${l}</span></div>`;
@@ -110,7 +131,8 @@ function onSnap() {
     sf(k.traffic_delay_min + ' min', 'Time lost to traffic', 'warn');
   document.querySelectorAll('#speed button').forEach(b => b.classList.toggle('on', +b.dataset.s === D.scale));
   document.querySelectorAll('#alloc button').forEach(b => b.classList.toggle('on', b.dataset.a === D.allocator));
-  $('autoBtn').textContent = 'Auto orders: ' + (D.auto_orders ? 'ON' : 'OFF');
+  $('autoBtn').textContent = D.auto_orders ? 'Orders: auto' : 'Orders: manual';
+  $('autoBtn').classList.toggle('on', !!D.auto_orders);
   if (S.twin) S.twin.update(D);
   if (S.plan) S.plan.update(D);
   if (S.page === 'ops') { if (S.tab === 'tasks') updateTasks(); else renderPanel(); }
@@ -137,7 +159,30 @@ function tip(r, x, y) {
   el.innerHTML = `<b>${nice(r.id)}</b> · ${r.state}${r.action ? ' · ' + r.action : ''}<br><span style="color:var(--muted)">${t.vendor} · ${t.interface} · battery ${Math.round(r.battery)}%</span>`;
 }
 
+function buildAisleSel(closed) {
+  const n = (S.MAP.aisles || []).length;
+  $('aisleSel').innerHTML = `<option value="">Maintenance…</option>` +
+    Array.from({ length: n }, (_, i) => closed.includes(i) ? `<option value="o${i}">Re-open aisle A${i + 1}</option>` : `<option value="c${i}">Close aisle A${i + 1}</option>`).join('');
+}
+async function refreshHeat() {
+  if (!S.heat) return;
+  try { const h = await api.get('/api/heatmap'); if (S.twin) S.twin.setHeat(h); if (S.plan) S.plan.setHeat(h); } catch (e) { /* next round */ }
+}
 function bindHeader() {
+  // left menu -> pages (each page has its own URL, e.g. #analytics, so it can be bookmarked or shared)
+  $('nav').addEventListener('click', e => { const b = e.target.closest('button[data-p]'); if (b) { if (location.hash === '#' + b.dataset.p) route(); else location.hash = b.dataset.p; } });
+  $('heatBtn').onclick = () => {
+    S.heat = !S.heat; $('heatBtn').classList.toggle('on', S.heat); $('heatLegend').style.display = S.heat ? 'flex' : 'none';
+    clearInterval(S.heatTimer);
+    if (S.heat) { refreshHeat(); S.heatTimer = setInterval(refreshHeat, 3000); } else { if (S.twin) S.twin.setHeat(null); if (S.plan) S.plan.setHeat(null); }
+  };
+  $('aisleSel').onchange = async e => {
+    const v = e.target.value; if (!v) return;
+    try { await api.post(`/api/aisles/${v.slice(1)}`, { closed: v[0] === 'c' }); toast(v[0] === 'c' ? `Aisle A${+v.slice(1) + 1} closed - robots are rerouting` : `Aisle A${+v.slice(1) + 1} re-opened`, true); } catch (er) { /* toast shown */ }
+    e.target.value = '';
+  };
+  const pause = () => api.post('/api/fleet/pause', { enabled: !(S.SNAP && S.SNAP.paused) });
+  $('pauseBtn').onclick = pause; $('resumeBtn').onclick = pause;
   $('speed').addEventListener('click', e => { const b = e.target.closest('button'); if (b) api.post('/api/sim/speed', { scale: +b.dataset.s }); });
   $('alloc').addEventListener('click', e => { const b = e.target.closest('button'); if (b) api.post('/api/sim/allocator', { name: b.dataset.a }); });
   $('autoBtn').onclick = () => api.post('/api/sim/auto-orders', { enabled: !(S.SNAP && S.SNAP.auto_orders) });
@@ -164,6 +209,7 @@ function bindPanel() {
       const id = act.dataset.id;
       if (act.dataset.act === 'fault') api.post(`/api/robots/${id}/fault`);
       else if (act.dataset.act === 'repair') api.post(`/api/robots/${id}/repair`);
+      else if (act.dataset.act === 'charge') api.post(`/api/robots/${id}/charge`).then(() => toast(`${nice(id)} is going to a charger`, true)).catch(() => {});
       else if (act.dataset.act === 'vendor') api.post(`/api/vendors/${id}/online`, { enabled: act.dataset.on === '1' });
       else if (act.dataset.act === 'follow' && S.twin) { S.view = '3d'; applyView(); S.twin.select(id); S.twin.view('follow'); }
       return;
@@ -190,7 +236,8 @@ function panelInner(P) {
   if (S.tab === 'robots') {
     // Structure is built once (and when the selection changes); afterwards rows are updated IN PLACE,
     // so the elements a user is clicking are never replaced.
-    const key = `${S.sel || ''}|${D.robots.length}|${(D.robots.find(x => x.id === S.sel) || {}).state === 'fault'}`;
+    const me = D.robots.find(x => x.id === S.sel) || {};
+    const key = `${S.sel || ''}|${D.robots.length}|${me.state === 'fault'}|${me.state === 'idle' && !me.task}`;
     if (P.dataset.key !== key || !$('rlist')) {
       P.dataset.key = key;
       let h = '<div id="rdetail"></div><div id="rlist">';
@@ -202,7 +249,7 @@ function panelInner(P) {
       const r = D.robots.find(x => x.id === S.sel);
       if (r) $('rdetail').innerHTML = `<div class="detail"><div id="rdinfo"></div>
         <div style="margin-top:10px;display:flex;gap:8px">${r.state === 'fault' ? `<button class="btn sm" data-act="repair" data-id="${r.id}">Repair now</button>` : `<button class="btn danger sm" data-act="fault" data-id="${r.id}">Inject fault</button>`}
-        <button class="btn sm" data-act="follow" data-id="${r.id}">Follow in 3D</button></div></div>`;
+        <button class="btn sm" data-act="follow" data-id="${r.id}">Follow in 3D</button>${r.state === 'idle' && !r.task ? `<button class="btn sm" data-act="charge" data-id="${r.id}">Send to charger</button>` : ''}</div></div>`;
     }
     for (const r of D.robots) {
       const el = P.querySelector(`.rob[data-id="${r.id}"]`); if (!el) continue;

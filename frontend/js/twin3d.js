@@ -35,11 +35,16 @@ export class Twin3D {
   constructor(el, map, { onSelect, onHover } = {}) {
     this.el = el; this.map = map; this.types = map.types; this.onSelect = onSelect; this.onHover = onHover;
     this.robots = new Map(); this.markers = new Map(); this.selected = null; this.follow = false; this.active = true;
+    this.flyers = []; this.restock = []; this.slots = new Map(); this.waitPallets = new Map(); this.lifted = new Set();
+    this.dockPallets = []; this.transferBoxes = []; this.conveyor = []; this.closedObjs = new Map(); this.scale = 1;
+    this.dwell = map.dwell_s || { pick: 3, drop: 2, high_pick: 6, handoff: 2, pallet_pick: 4, pallet_drop: 4, scan: 1 };
     this.W = map.width; this.H = map.height; this.cx = this.W / 2; this.cz = this.H / 2;
 
     const r = this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-    r.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    r.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
     r.shadowMap.enabled = true; r.shadowMap.type = THREE.PCFSoftShadowMap;
+    r.shadowMap.autoUpdate = false;            // shadows are refreshed every few frames (see _loop) - big saving on laptops
+    this.frame = 0; this.fpsT = 0; this.fpsN = 0; this.lowQ = false;
     r.outputColorSpace = THREE.SRGBColorSpace; r.toneMapping = THREE.ACESFilmicToneMapping; r.toneMappingExposure = 1.1;
     el.appendChild(r.domElement);
 
@@ -58,8 +63,8 @@ export class Twin3D {
     s.add(sun, sun.target);
     const fill = new THREE.DirectionalLight('#7fb5ff', 0.35); fill.position.set(this.cx + 30, 25, this.cz + 40); s.add(fill);
 
-    this._buildFloor(); this._buildZones(); this._buildRacks(); this._buildPallets(); this._buildPacking();
-    this._buildChargers(); this._buildWalls();
+    this._buildFloor(); this._buildZones(); this._buildRacks(); this._buildPalletDecor(); this._buildPacking();
+    this._buildChargers(); this._buildWalls(); this._buildHeat();
     this.view('overview');
 
     this.ray = new THREE.Raycaster(); this.ptr = new THREE.Vector2();
@@ -116,7 +121,7 @@ export class Twin3D {
         for (let x = s.x; x < s.x + s.w; x++) for (let z = s.y; z < s.y + s.h; z++) if (rand() < 0.74) {
           const w = 0.55 + rand() * 0.3, h = 0.32 + rand() * (lv > 2.5 ? 0.45 : 0.55), d = 0.55 + rand() * 0.3;
           const r = rand(), col = r < 0.12 ? '#2f6fd6' : r < 0.2 ? '#d6dce6' : ['#b98c5a', '#a87b4b', '#c89b67', '#9c7246'][Math.floor(rand() * 4)];
-          boxes.push([x + 0.5, lv + 0.03 + h / 2, z + 0.5, w, h, d, col]);
+          boxes.push([x + 0.5, lv + 0.03 + h / 2, z + 0.5, w, h, d, col, `${x}|${z}|${LEVELS.indexOf(lv)}`]);
         }
       }
       const lab = floorLabel('A' + (i + 1), 1.4, '#7fa2e0'); lab.position.set(s.x - 1.3, 0.03, s.y + s.h / 2); this.scene.add(lab);
@@ -129,21 +134,22 @@ export class Twin3D {
     inst(new THREE.BoxGeometry(0.09, RACK_H, 0.09), std('#4b6cc0', { metalness: 0.5 }), ups, (o, p) => { o.position.set(...p); o.scale.set(1, 1, 1); });
     inst(new THREE.BoxGeometry(1, 0.11, 0.06), std('#e8742a', { metalness: 0.4 }), beams, (o, p) => { o.position.set(p[0], p[1], p[2]); o.scale.set(p[3], 1, 1); });
     inst(new THREE.BoxGeometry(1, 0.03, 1), std('#6b7c9c', { metalness: 0.5 }), decks, (o, p) => { o.position.set(p[0], p[1], p[2]); o.scale.set(p[3], 1, p[4]); });
-    inst(new THREE.BoxGeometry(1, 1, 1), std('#ffffff', { roughness: 0.85, metalness: 0 }), boxes,
+    this.boxMesh = inst(new THREE.BoxGeometry(1, 1, 1), std('#ffffff', { roughness: 0.85, metalness: 0 }), boxes,
       (o, p) => { o.position.set(p[0], p[1], p[2]); o.scale.set(p[3], p[4], p[5]); o.rotation.y = 0; }, false);
+    boxes.forEach((b, i) => { const m = new THREE.Matrix4(); this.boxMesh.getMatrixAt(i, m); this.slots.set(b[7], { i, m, col: b[6], size: [b[3], b[4], b[5]], pos: new THREE.Vector3(b[0], b[1], b[2]), taken: false }); });
+    this.shelvesSorted = shelves;
   }
 
-  _buildPallets() {
+  _buildPalletDecor() {
+    // Pallets that are WAITING to be moved are drawn dynamically from the live order list (see _syncPallets).
+    // Here only a static row of stored stock along the back edge of the pallet area.
     const z = this.map.zones.pallet_area; if (!z) return;
-    const rand = rng(11), pal = [], loads = [];
-    for (let x = z.x + 1; x < z.x + z.w - 1; x += 2) for (let y = z.y + 1.5; y < z.y + z.h - 1; y += 2.5) if (rand() < 0.55) {
-      pal.push([x + 0.5, 0.07, y]);
-      const h = 0.5 + rand() * 0.9; loads.push([x + 0.5, 0.14 + h / 2, y, h, rand() < 0.5 ? '#cfd8e6' : '#b98c5a']);
+    const rand = rng(11);
+    for (let x = z.x + 0.5; x < z.x + z.w - 0.5; x += 1.6) {
+      this.scene.add(box(0.95, 0.14, 0.95, std('#9b6b3c', { metalness: 0, roughness: 0.9 }), x + 0.3, 0.07, z.y + 0.6));
+      const h = 0.6 + rand() * 1.1;
+      this.scene.add(box(0.86, h, 0.86, std(rand() < 0.5 ? '#cfd8e6' : '#b98c5a', { metalness: 0, roughness: 0.6 }), x + 0.3, 0.14 + h / 2, z.y + 0.6));
     }
-    const inst = (geo, mat, list, f) => { const m = new THREE.InstancedMesh(geo, mat, list.length), o = new THREE.Object3D(), c = new THREE.Color();
-      list.forEach((p, i) => { f(o, p); o.updateMatrix(); m.setMatrixAt(i, o.matrix); if (p[4]) m.setColorAt(i, c.set(p[4])); }); m.castShadow = true; m.receiveShadow = true; this.scene.add(m); };
-    inst(new THREE.BoxGeometry(1, 0.14, 1), std('#9b6b3c', { roughness: 0.9, metalness: 0 }), pal, (o, p) => { o.position.set(...p); o.scale.set(0.95, 1, 0.95); });
-    inst(new THREE.BoxGeometry(1, 1, 1), std('#ffffff', { roughness: 0.6, metalness: 0 }), loads, (o, p) => { o.position.set(p[0], p[1], p[2]); o.scale.set(0.88, p[3], 0.88); });
   }
 
   _buildPacking() {
@@ -152,7 +158,6 @@ export class Twin3D {
       g.add(box(z.w - 1, 0.85, 0.8, std('#33476f'), z.x + z.w / 2, 0.425, z.y + 0.6));
       g.add(box(z.w - 1, 0.04, 0.82, std('#cdd6e6', { metalness: 0.6 }), z.x + z.w / 2, 0.87, z.y + 0.6));
       g.add(box(z.w - 1.2, 0.06, 0.4, std('#1b2438', { roughness: 0.4 }), z.x + z.w / 2, 0.92, z.y + 0.6));
-      for (let i = 0; i < 3; i++) g.add(box(0.4, 0.3, 0.35, std('#b98c5a', { roughness: 0.9, metalness: 0 }), z.x + 1 + i * 1.6, 1.1, z.y + 0.6));
       const mon = box(0.5, 0.32, 0.04, glow('#2E9FE8', 0.6), z.x + z.w - 1.2, 1.35, z.y + 0.35); g.add(mon);
       this.scene.add(g);
     }
@@ -180,6 +185,14 @@ export class Twin3D {
       const east = dz.x + dz.w >= W - 3;
       if (east) {
         this.scene.add(box(0.3, 6, dz.h + 2, wall, W + 0.15, 3, dz.y + dz.h / 2));
+        // a trailer backed up to the dock (pallets set down at the dock are 'loaded' into it)
+        this.truck = new THREE.Group();
+        this.truck.add(box(9, 3.2, 2.5, std('#d9dee8', { metalness: 0.3, roughness: 0.5 }), 4.7, 1.9, 0));
+        this.truck.add(box(9.1, 0.25, 2.6, std('#2E9FE8'), 4.7, 0.5, 0));
+        for (const x of [6.5, 7.6]) for (const zz of [-1.15, 1.15]) { const w = cyl(0.45, 0.45, 0.3, std('#111827')); w.rotation.x = Math.PI / 2; w.position.set(x, 0.45, zz); this.truck.add(w); }
+        const { tex: tt, aspect: ta } = textTexture('TusCore Logistics', { size: 80, color: '#0A1A3C' });
+        const side = new THREE.Mesh(new THREE.PlaneGeometry(5, 5 / ta), new THREE.MeshBasicMaterial({ map: tt, transparent: true })); side.position.set(4.7, 2.2, 1.27); this.truck.add(side);
+        this.truckHome = new THREE.Vector3(W + 0.4, 0, dz.y + 1 + 1); this.truck.position.copy(this.truckHome); this.scene.add(this.truck);
         for (let y = dz.y + 1; y < dz.y + dz.h - 1; y += 3) {
           this.scene.add(box(0.06, 3.2, 2.2, std('#26324d', { metalness: 0.6 }), W - 0.02, 1.6, y + 1));
           this.scene.add(box(0.1, 0.35, 2.4, std('#f5c542'), W - 0.05, 0.2, y + 1));
@@ -203,9 +216,12 @@ export class Twin3D {
       g.add(box(0.7, 0.03, 0.52, std('#2a3550'), 0, 0.295, 0));
       const lid = cyl(0.07, 0.07, 0.09, dark); lid.position.set(0.3, 0.35, 0); g.add(lid);
       for (const z of [-0.2, 0.2]) g.add(box(0.02, 0.05, 0.12, p.led, 0.395, 0.18, z, false));
-      p.load = new THREE.Group();
-      p.load.add(box(0.62, 0.3, 0.48, std('#2f6fd6', { roughness: 0.5 }), 0, 0.46, 0));
-      p.load.add(box(0.5, 0.06, 0.36, std('#b98c5a', { metalness: 0 }), 0, 0.62, 0));
+      const binMat = std('#2f6fd6', { roughness: 0.5 });
+      g.add(box(0.62, 0.04, 0.48, binMat, 0, 0.33, 0));                          // open bin: floor + 4 walls
+      g.add(box(0.62, 0.24, 0.04, binMat, 0, 0.44, -0.22)); g.add(box(0.62, 0.24, 0.04, binMat, 0, 0.44, 0.22));
+      g.add(box(0.04, 0.24, 0.48, binMat, -0.29, 0.44, 0)); g.add(box(0.04, 0.24, 0.48, binMat, 0.29, 0.44, 0));
+      p.load = box(0.42, 0.26, 0.34, std('#b98c5a', { metalness: 0, roughness: 0.9 }), 0, 0.48, 0);
+      p.binTop = 0.62;
     } else if (r.type === 'scissor_lift') {
       g.add(box(0.9, 0.08, 0.74, dark, 0, 0.06, 0));
       g.add(box(0.86, 0.24, 0.7, bodyMat, 0, 0.2, 0));
@@ -221,7 +237,7 @@ export class Twin3D {
       for (const [x, z] of [[-0.4, -0.33], [0.4, -0.33], [-0.4, 0.33], [0.4, 0.33]]) p.platform.add(box(0.035, 0.5, 0.035, rail, x, 0.27, z));
       p.platform.add(box(0.84, 0.035, 0.035, rail, 0, 0.5, -0.33)); p.platform.add(box(0.84, 0.035, 0.035, rail, 0, 0.5, 0.33));
       p.platform.add(box(0.035, 0.035, 0.7, rail, -0.4, 0.5, 0));
-      p.load = box(0.56, 0.3, 0.44, std('#2f6fd6'), 0, 0.18, 0); p.platform.add(p.load);
+      p.load = box(0.5, 0.32, 0.4, std('#b98c5a', { metalness: 0, roughness: 0.9 }), 0, 0.19, 0); p.platform.add(p.load);
       g.add(p.platform); p.lift = 0.34;
     } else if (r.type === 'pallet_stacker') {
       g.add(box(0.66, 0.85, 0.74, bodyMat, -0.28, 0.5, 0));
@@ -303,6 +319,7 @@ export class Twin3D {
       seen.add(r.id);
       let rec = this.robots.get(r.id);
       if (!rec) { rec = this._makeRobot(r); this.robots.set(r.id, rec); }
+      if (rec.data && rec.data !== r) this._transitions(rec, rec.data, r);
       rec.data = r;
       const key = r.path.length + ':' + (r.path[0] || '') + ':' + (r.path[r.path.length - 1] || '');
       if (key !== rec.p.pathKey) {
@@ -314,6 +331,9 @@ export class Twin3D {
       }
     }
     for (const [id, rec] of this.robots) if (!seen.has(id)) { this._disposeRobot(rec); this.robots.delete(id); }
+    this.scale = snap.scale || 1;
+    this._syncPallets(snap);
+    this._setClosed(snap.closed_rows || []);
     // queued order markers
     const want = new Set();
     for (const t of snap.tasks) {
@@ -338,6 +358,158 @@ export class Twin3D {
     else if (name === 'orbit') { c.autoRotate = true; }
     else { this.camera.position.set(cx + W * 0.18, m * 0.5, cz + H * 0.98); c.target.set(cx, 0, cz * 1.05); }
     c.update(); return true;
+  }
+
+  // ------------------------------------------------------------------ pick / drop realism
+  _dur(kind) { return Math.min(2.6, Math.max(0.25, (this.dwell[kind] || 2) / Math.max(0.1, this.scale))); }
+  _carton(col = '#b98c5a', size = [0.42, 0.26, 0.34]) {
+    const m = box(size[0], size[1], size[2], std(col, { metalness: 0, roughness: 0.9 }), 0, 0, 0); m.castShadow = true; this.scene.add(m); return m;
+  }
+  _fly(mesh, from, to, dur, { arc = 0.6, delay = 0, then = null } = {}) {
+    mesh.position.copy(from); this.flyers.push({ mesh, from: from.clone(), to, dur, arc, t: -delay, then });
+  }
+  _shelfRowAt(cellY) { return (this.shelvesSorted || []).find(s => s.y + s.h === Math.round(cellY)); }
+  _takeBox(x, s, levels) {
+    // take the real carton out of the rack slot (front row first); it is restocked a while later
+    for (const li of levels) for (const z of [s.y + s.h - 1, s.y]) {
+      const sl = this.slots.get(`${x}|${z}|${li}`);
+      if (sl && !sl.taken) {
+        sl.taken = true; const o = new THREE.Matrix4().makeScale(0, 0, 0); this.boxMesh.setMatrixAt(sl.i, o); this.boxMesh.instanceMatrix.needsUpdate = true;
+        this.restock.push({ sl, at: performance.now() + 90000 }); return { pos: sl.pos.clone(), col: sl.col, size: [sl.size[0] * 0.7, Math.min(sl.size[1], 0.5), sl.size[2] * 0.6] };
+      }
+    }
+    return { pos: new THREE.Vector3(x + 0.5, LEVELS[levels[0]] + 0.3, s.y + s.h - 0.5), col: '#b98c5a', size: [0.42, 0.26, 0.34] };
+  }
+  _binPos(rec) { return new THREE.Vector3(rec.pos.x, (rec.p.binTop || 0.62) * VIS, rec.pos.z); }
+  _platPos(rec) { return new THREE.Vector3(rec.pos.x, (rec.p.lift + 0.25) * VIS, rec.pos.z); }
+  _forkTip(rec) { return new THREE.Vector3(rec.pos.x + Math.cos(rec.yaw) * 0.6 * VIS, 0.07, rec.pos.z - Math.sin(rec.yaw) * 0.6 * VIS); }
+
+  _transitions(rec, prev, r) {
+    const startWork = r.state === 'working' && (prev.state !== 'working' || prev.action !== r.action);
+    if (startWork && r.action === 'pick box') {                       // tote AMR takes a carton off the shelf
+      const s = this._shelfRowAt(r.y); if (!s) return;
+      const b = this._takeBox(Math.round(r.x), s, Math.random() < 0.5 ? [0, 1] : [1, 0]);
+      const m = this._carton(b.col, b.size); rec.p.pending = true;
+      this._fly(m, b.pos, () => this._binPos(rec), this._dur('pick'), { arc: 0.4, then: () => { this.scene.remove(m); rec.p.pending = false; } });
+    } else if (startWork && r.action === 'pick high shelf') {         // scissor lift: carton from the TOP level
+      const s = this._shelfRowAt(r.y); if (!s) return;
+      const d = this._dur('high_pick'), b = this._takeBox(Math.round(r.x), s, [3, 2]);
+      const m = this._carton(b.col, b.size); m.visible = false; rec.p.pending = true;
+      this._fly(m, b.pos, () => this._platPos(rec), d * 0.45, { arc: 0.2, delay: d * 0.5, then: () => { this.scene.remove(m); rec.p.pending = false; } });
+      this.flyers[this.flyers.length - 1].show = m;
+    } else if (startWork && r.action === 'hand over') {               // lift -> tote AMR of the same order
+      const mate = [...this.robots.values()].find(o => o !== rec && o.data.task === r.task && o.data.type === 'tote_amr');
+      if (!mate) return;
+      rec.p.hideLoad = true; mate.p.pending = true;
+      const m = this._carton(); this._fly(m, this._platPos(rec), () => this._binPos(mate), this._dur('handoff'), { arc: 0.5, then: () => { this.scene.remove(m); mate.p.pending = false; } });
+    } else if (startWork && r.action === 'place at transfer point') { // separate managers: lift leaves the carton on the floor
+      rec.p.hideLoad = true; const m = this._carton();
+      const spot = new THREE.Vector3(rec.pos.x + 0.55, 0.13, rec.pos.z + 0.55);
+      this._fly(m, this._platPos(rec), spot, this._dur('handoff'), { arc: 0.3, then: () => { this.transferBoxes.push(m); } });
+    } else if (startWork && r.action === 'collect tote') {
+      let best = null, bd = 9;
+      for (const m of this.transferBoxes) { const dd = Math.hypot(m.position.x - rec.pos.x, m.position.z - rec.pos.z); if (dd < bd) { bd = dd; best = m; } }
+      if (best) { this.transferBoxes.splice(this.transferBoxes.indexOf(best), 1); rec.p.pending = true;
+        this._fly(best, best.position.clone(), () => this._binPos(rec), this._dur('handoff'), { arc: 0.4, then: () => { this.scene.remove(best); rec.p.pending = false; } }); }
+    } else if (startWork && r.action === 'drop at packing') {         // carton onto the packing table, then the conveyor
+      rec.p.hideLoad = true;
+      const z = this._nearestZone(rec.pos, 'packing'); if (!z) return;
+      const tx = Math.min(z.x + z.w - 1, Math.max(z.x + 0.8, rec.pos.x)), table = new THREE.Vector3(tx, 1.08, z.y + 0.6);
+      const m = this._carton();
+      this._fly(m, this._binPos(rec), table, this._dur('drop'), { arc: 0.5, then: () => this.conveyor.push({ m, endX: z.x + z.w - 0.7, life: 3.5 }) });
+    }
+    // pallets: picked up -> gone from the floor; set down at the dock -> stays there until the truck takes it
+    if (r.type === 'pallet_stacker') {
+      if (!prev.load && r.load === 'pallet' && prev.task) this.lifted.add(prev.task);
+      if (prev.load === 'pallet' && !r.load && prev.action === 'set down at dock') this._dockPallet(this._forkTip(rec));
+    }
+  }
+  _nearestZone(pos, prefix) {
+    let best = null, bd = 1e9;
+    for (const [k, z] of Object.entries(this.map.zones)) if (k.startsWith(prefix)) { const d = Math.hypot(z.x + z.w / 2 - pos.x, z.y + z.h / 2 - pos.z); if (d < bd) { bd = d; best = z; } }
+    return best;
+  }
+  _palletMesh(h = 0.8) {
+    const g = new THREE.Group();
+    g.add(box(0.95, 0.14, 0.95, std('#9b6b3c', { metalness: 0, roughness: 0.9 }), 0, 0.07, 0));
+    g.add(box(0.86, h, 0.86, std('#cfd8e6', { metalness: 0, roughness: 0.6 }), 0, 0.14 + h / 2, 0));
+    this.scene.add(g); return g;
+  }
+  _syncPallets(snap) {
+    // pallets waiting to be moved stand where the pallet stacker will pick them up
+    const want = new Set();
+    for (const t of snap.tasks) if (t.kind === 'pallet_move' && !this.lifted.has(t.id)) {
+      want.add(t.id);
+      if (!this.waitPallets.has(t.id)) { const g = this._palletMesh(0.55 + (t.id % 5) * 0.12); g.position.set(t.pickup[0] + 0.5, 0, t.pickup[1] + 0.5); this.waitPallets.set(t.id, g); }
+    }
+    for (const [id, g] of this.waitPallets) if (!want.has(id)) { this.scene.remove(g); this.waitPallets.delete(id); }
+    if (this.lifted.size > 500) this.lifted.clear();
+  }
+  _dockPallet(pos) {
+    const g = this._palletMesh(0.75); g.position.set(pos.x, 0, pos.z); this.dockPallets.push(g);
+    if (this.dockPallets.length >= 6 && !this.truckGo) this.truckGo = { t: 0, load: this.dockPallets.splice(0) };
+  }
+  _animateItems(dt, t) {
+    for (let i = this.flyers.length - 1; i >= 0; i--) {
+      const f = this.flyers[i]; f.t += dt;
+      if (f.t < 0) continue;
+      if (f.show) { f.show.visible = true; f.show = null; }
+      const k = Math.min(1, f.t / f.dur), e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+      const to = typeof f.to === 'function' ? f.to() : f.to;
+      f.mesh.position.lerpVectors(f.from, to, e); f.mesh.position.y += Math.sin(Math.PI * e) * f.arc;
+      if (k >= 1) { this.flyers.splice(i, 1); if (f.then) f.then(); }
+    }
+    for (let i = this.conveyor.length - 1; i >= 0; i--) {             // packed cartons ride the conveyor and leave
+      const c = this.conveyor[i]; c.life -= dt; c.m.position.x = Math.min(c.endX, c.m.position.x + dt * 0.9);
+      if (c.life < 0.6) c.m.scale.setScalar(Math.max(0.01, c.life / 0.6));
+      if (c.life <= 0) { this.scene.remove(c.m); this.conveyor.splice(i, 1); }
+    }
+    const now = performance.now();
+    for (let i = this.restock.length - 1; i >= 0; i--) if (now >= this.restock[i].at) {
+      const { sl } = this.restock[i]; sl.taken = false; this.boxMesh.setMatrixAt(sl.i, sl.m); this.boxMesh.instanceMatrix.needsUpdate = true; this.restock.splice(i, 1);
+    }
+    if (this.truckGo && this.truck) {                                 // truck loads the dock pallets, drives off, comes back
+      const g = this.truckGo; g.t += dt;
+      const fade = Math.max(0, 1 - g.t / 1.2); g.load.forEach(p => p.scale.setScalar(Math.max(0.01, fade)));
+      if (g.t > 1.2 && g.load.length) { g.load.forEach(p => this.scene.remove(p)); g.load = []; }
+      this.truck.position.x = this.truckHome.x + (g.t < 1.5 ? 0 : g.t < 5 ? (g.t - 1.5) ** 2 * 3 : Math.max(0, 36 - (g.t - 5) * 12));
+      if (g.t > 8) { this.truck.position.copy(this.truckHome); this.truckGo = null; }
+    }
+  }
+
+  // ------------------------------------------------------------------ overlays: congestion heatmap, closed aisles
+  _buildHeat() {
+    const n = this.W * this.H;
+    this.heat = new THREE.InstancedMesh(new THREE.PlaneGeometry(0.96, 0.96), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.62, depthWrite: false }), n);
+    this.heat.rotation.x = 0; this.heat.count = 0; this.heat.visible = false; this.heat.renderOrder = 2; this.scene.add(this.heat);
+  }
+  setHeat(data) {
+    if (!data) { this.heat.visible = false; return; }
+    const o = new THREE.Object3D(), c = new THREE.Color(), max = Math.max(1, data.max), cells = data.cells.slice(0, this.W * this.H);
+    cells.forEach(([x, y, v], i) => {
+      o.position.set(x + 0.5, 0.05, y + 0.5); o.rotation.set(-Math.PI / 2, 0, 0); o.updateMatrix(); this.heat.setMatrixAt(i, o.matrix);
+      const k = Math.log1p(v) / Math.log1p(max); c.setHSL(0.16 - 0.16 * k, 1, 0.5); this.heat.setColorAt(i, c);
+    });
+    this.heat.count = cells.length; this.heat.instanceMatrix.needsUpdate = true; if (this.heat.instanceColor) this.heat.instanceColor.needsUpdate = true;
+    this.heat.visible = true;
+  }
+  _setClosed(rows) {
+    const key = rows.join(','); if (key === this._closedKey) return; this._closedKey = key;
+    for (const [r, g] of this.closedObjs) if (!rows.includes(r)) { this.scene.remove(g); this.closedObjs.delete(r); }
+    for (const r of rows) if (!this.closedObjs.has(r) && this.map.aisles && this.map.aisles[r]) {
+      const [x, y, w, h] = this.map.aisles[r], g = new THREE.Group();
+      const c = document.createElement('canvas'); c.width = 64; c.height = 64; const q = c.getContext('2d');
+      q.fillStyle = '#1b1b1b'; q.fillRect(0, 0, 64, 64); q.strokeStyle = '#f5c542'; q.lineWidth = 14;
+      for (let i = -64; i < 128; i += 32) { q.beginPath(); q.moveTo(i, 64); q.lineTo(i + 64, 0); q.stroke(); }
+      const tex = new THREE.CanvasTexture(c); tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.repeat.set(w, h); tex.colorSpace = THREE.SRGBColorSpace;
+      const pl = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: 0.75, depthWrite: false }));
+      pl.rotation.x = -Math.PI / 2; pl.position.set(x + w / 2, 0.06, y + h / 2); g.add(pl);
+      for (const xx of [x, x + w]) { g.add(box(0.12, 1.0, 0.12, std('#f5c542'), xx, 0.5, y + h / 2)); g.add(box(0.06, 0.12, h, std('#ff5d6c'), xx, 0.9, y + h / 2)); }
+      const { tex: lt, aspect } = textTexture(`A${r + 1} · MAINTENANCE`, { size: 72, color: '#1b1b1b', bg: '#f5c542' });
+      const ls = Math.max(5, Math.max(this.W, this.H) / 9), lab = new THREE.Sprite(new THREE.SpriteMaterial({ map: lt, depthTest: false })); lab.scale.set(ls, ls / aspect, 1); lab.position.set(x + w / 2, 5.2, y + h / 2); lab.renderOrder = 11; g.add(lab);
+      g.add(box(w, 0.06, 0.08, std('#f5c542'), x + w / 2, 4.0, y + h / 2, false));   // overhead barrier tape, visible above the racks
+      this.scene.add(g); this.closedObjs.set(r, g);
+    }
   }
 
   resize() {
@@ -367,6 +539,7 @@ export class Twin3D {
     if (!this.active) return;
     const k = 1 - Math.exp(-dt * 9);
     for (const rec of this.robots.values()) this._animate(rec, dt, t, k);
+    this._animateItems(dt, t);
     for (const m of this.markers.values()) { m.position.y = 0.6 + Math.sin(t * 2.4 + m.userData.phase) * 0.12; m.rotation.y += dt * 1.2; }
     if (this.follow && this.selected && this.robots.has(this.selected)) {
       const p = this.robots.get(this.selected).pos, c = this.controls, d = p.clone().sub(c.target).multiplyScalar(k);
@@ -374,7 +547,14 @@ export class Twin3D {
     }
     this.controls.update();
     this._tag();
+    if (this.frame++ % 5 === 0) this.renderer.shadowMap.needsUpdate = true;
     this.renderer.render(this.scene, this.camera);
+    // adaptive quality: if this machine renders < 22 fps for 3 s, drop shadows and pixel density once
+    const nowMs = performance.now(); this.fpsN++;
+    if (!this.fpsStart) this.fpsStart = nowMs;
+    if (nowMs - this.fpsStart >= 3000) { const fps = this.fpsN * 1000 / (nowMs - this.fpsStart); this.fps = Math.round(fps); this.fpsStart = nowMs; this.fpsN = 0;
+      if (fps < 22 && !this.lowQ) { this.lowQ = true; this.renderer.shadowMap.enabled = false; this.renderer.setPixelRatio(1);
+        this.scene.traverse(o => { if (o.material) o.material.needsUpdate = true; }); this.resize(); } }
   }
 
   _animate(rec, dt, t, k) {
@@ -389,7 +569,8 @@ export class Twin3D {
     g.position.set(rec.pos.x, 0, rec.pos.z); g.rotation.y = rec.yaw;
     p.led.color.set(STATE_COL[r.state] || '#7f93b5'); p.led.emissive.set(STATE_COL[r.state] || '#7f93b5');
     p.led.emissiveIntensity = r.state === 'charging' ? 1.2 + Math.sin(t * 4) * 0.8 : 1.8;
-    if (p.load) p.load.visible = !!r.load;
+    if (p.load) p.load.visible = !!r.load && !p.pending && !p.hideLoad;
+    if (!r.load) p.hideLoad = false;
 
     if (p.kind === 'scissor_lift') {
       const up = (r.state === 'working' && r.action === 'pick high shelf') || (r.load && r.state !== 'moving' && r.action !== 'hand over' && r.action !== 'place at transfer point');
@@ -432,7 +613,9 @@ export class Twin3D {
     const topY = p.kind === 'drone' ? p.alt * VIS + 1.4 : 5.4;
     p.pin.position.set(rec.pos.x, topY, rec.pos.z);
     p.pin.material.map = fault ? p.pinTex.fault : p.pinTex.normal;
-    const ps = sel ? 1.45 : 1.05; p.pin.scale.set(ps, ps, 1);
+    const busy = !['idle', 'charging'].includes(r.state);           // parked robots get a small, faint marker
+    const ps = sel ? 1.45 : busy ? 1.0 : 0.62; p.pin.scale.set(ps, ps, 1); p.pin.material.opacity = sel || busy ? 1 : 0.55;
+    p.stem.visible = busy || sel;
     p.stem.position.set(rec.pos.x, 0, rec.pos.z); p.stem.scale.y = topY - 0.5;
     p.halo.position.x = rec.pos.x; p.halo.position.z = rec.pos.z;
     p.halo.material.opacity = sel ? 0.5 : 0.28;

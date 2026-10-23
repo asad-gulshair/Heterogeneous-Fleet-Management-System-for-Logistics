@@ -30,6 +30,9 @@ uvicorn app.main:app --reload --reload-dir app --reload-dir ../config
 ```
 
 ## What the console shows
+- **Overview** - the client view: every vendor's fleet at a glance, how TusCore runs the site live (orders in →
+  allocation → reserved routes → vendor protocols → recovery, with live counters), what needs attention now, and the
+  proven value from the comparison.
 - **Live** - 3D digital twin (orbit, zoom, follow a robot, auto-orbit) or 2D plan; KPIs (orders/hour, wait, cycle,
   utilization, energy); safety strip (collisions, deadlocks, faults); robot cards with *inject fault*; order center
   with manual order form; vendor panel with online/offline and *simulate outage*; event log; live protocol inspector.
@@ -39,6 +42,12 @@ uvicorn app.main:app --reload --reload-dir app --reload-dir ../config
   identical orders and faults.
 - **What-if** - change robot counts, order volume, chargers or layout and see the KPI impact plus an ROI / payback estimate.
 - **API** - every endpoint, MQTT status, how to integrate a WMS and how to add a vendor.
+
+Operator controls on the twin: **Pause fleet** (every robot holds position), **Maintenance** (close / re-open an aisle -
+traffic reroutes, orders there wait), **Heatmap** (where robots lose time waiting), **Send to charger** on a robot card.
+In 3D you can watch real work: cartons leave their shelf slot into the tote bin, ride the packing conveyor; the scissor lift
+takes cartons from the top level and hands them to a tote robot; pallets wait at their pickup spot, ride the forks and
+stack at the dock until the truck takes them.
 
 Click the mode pill in the header to switch the *live* twin between one TusCore manager and separate vendor managers.
 
@@ -60,6 +69,7 @@ More result files: `results/`.
 config/            warehouse layouts (YAML) - a new layout needs no code change
   warehouse.yaml          60 x 40 demo warehouse, 12 robots
   warehouse_large.yaml    80 x 50 regional DC, 19 robots
+  warehouse_xl.yaml       100 x 64 mega DC, 40 robots (scale demo)
 backend/app/
   sim.py           simulation core + fleet manager (task execution, traffic, charging, faults, KPIs)
   allocator.py     greedy and Hungarian task allocation
@@ -73,7 +83,7 @@ backend/app/
 backend/tests/     python -m pytest -q
 backend/scripts/run_shift.py   headless 8 h shift in ~6 s
 frontend/          TusCore Fleet Console (Three.js 3D twin, Chart.js analytics - bundled, works offline)
-docs/              STEPS.md (build log and design choices), REQUIREMENTS.md (brief vs implementation)
+docs/              STEPS.md (build log), REQUIREMENTS.md (brief vs implementation), REAL_WORLD.md (live-site architecture)
 ```
 
 ## Tests

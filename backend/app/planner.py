@@ -8,6 +8,7 @@ import heapq
 from .grid import Grid
 
 LANE_PENALTY = 0.3
+CLOSED_PENALTY = 60.0     # aisle closed for maintenance: only used if there is no other way (e.g. to drive out)
 
 
 def _lane_cost(cur, n) -> float:
@@ -46,7 +47,7 @@ def astar(grid: Grid, start, goal, flying: bool = False, blocked=None):
             n = (cur[0] + dx, cur[1] + dy)
             if n in blocked or not grid.passable(*n, flying):
                 continue
-            ng = g + (1.0 if flying else _lane_cost(cur, n))
+            ng = g + (1.0 if flying else _lane_cost(cur, n) + (CLOSED_PENALTY if n in grid.closed else 0.0))
             if ng < g_cost.get(n, 1e18):
                 g_cost[n] = ng
                 came_from[n] = cur

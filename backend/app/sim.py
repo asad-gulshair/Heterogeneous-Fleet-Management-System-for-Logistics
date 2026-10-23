@@ -76,6 +76,7 @@ class Simulation:
         self.time_scale = 1.0
         self.auto_orders = True
         self.publisher = None              # set by the API process to mirror VDA 5050 traffic to Mosquitto
+        self.sla_s = self.cfg.get("sla_s", 600)    # an order is "on time" if finished within this many seconds
         self.reset(seed, allocator)
 
     # ------------------------------------------------------------ setup
@@ -102,7 +103,11 @@ class Simulation:
                       "mismatches": 0, "by_kind": {k: 0 for k in KINDS},
                       "collisions": 0, "deadlocks": 0, "permanent": 0, "faults": 0, "reassigned": 0,
                       "evasions": 0, "traffic_delay": 0.0, "preempted": 0,
-                      "completed_in_shift": 0, "operator": 0}
+                      "completed_in_shift": 0, "operator": 0, "on_time": 0, "commands": 0}
+        self.paused = False                               # fleet-wide pause (emergency stop)
+        self.heat: dict = {}                              # cell -> seconds robots spent waiting there (congestion map)
+        self.grid.closed = set()
+        self.closed_rows: set = set()
         self.history: deque = deque(maxlen=720)          # one KPI sample per simulated minute (12 h)
         self._next_sample = 0.0
         self._done_times: deque = deque()                # completion times in the last hour (rolling throughput)
@@ -163,13 +168,14 @@ class Simulation:
         if self.auto_orders:
             for kind, t in self.arrivals.due(self.sim_time):
                 self.add_order(kind, at=t)
-        self._random_faults(dt)
-        self._qcaps = {role for tid in self.queue for role in self.tasks[tid].plans}
-        self._allocate()
-        for r in self._order:
-            self._tick_robot(r, dt)
-        self._resolve_traffic()
-        self._check_collisions()
+        if not self.paused:                      # paused = every robot holds position; orders keep arriving
+            self._random_faults(dt)
+            self._qcaps = {role for tid in self.queue for role in self.tasks[tid].plans}
+            self._allocate()
+            for r in self._order:
+                self._tick_robot(r, dt)
+            self._resolve_traffic()
+            self._check_collisions()
         if self.sim_time >= self._next_sample:
             self._sample()
             self._next_sample += 60.0
@@ -242,7 +248,7 @@ class Simulation:
         return {a.cell for plan in t.plans.values() for a in plan}
 
     def _sites_free(self, t: Task) -> bool:
-        return all(self.site_lock.get(c, t.id) == t.id for c in self._sites(t))
+        return all(self.site_lock.get(c, t.id) == t.id and c not in self.grid.closed for c in self._sites(t))
 
     def _unlock_sites(self, t: Task):
         for c in self._sites(t):
@@ -268,6 +274,7 @@ class Simulation:
     def _send_path(self, r: Robot, path: list, target, label: str, state: str = "moving"):
         """The ONLY way the manager moves a robot: command goes through the vendor adapter,
         the robot receives the decoded vendor message."""
+        self.stats["commands"] += 1
         got_path, got_target = self.adapters[r.rtype].send_order(self.sim_time, r, path, target, label, r.task_id)
         r.set_path(got_path, got_target, state)
 
@@ -316,6 +323,7 @@ class Simulation:
                     if not moved:
                         r.blocked_by = owner
                         r.blocked_for += dt
+                        self.heat[r.cell] = self.heat.get(r.cell, 0.0) + dt
                         self.stats["traffic_delay"] += dt
                     return
                 self.traffic.claim(nxt, r.id)
@@ -407,6 +415,8 @@ class Simulation:
         self._done_times.append(self.sim_time)
         if t.finished <= self.shift_len:
             s["completed_in_shift"] += 1
+        if t.finished - t.created <= self.sla_s:
+            s["on_time"] += 1
         s["cycle_sum"] += t.finished - t.created
         s["by_kind"][t.kind] += 1
         if t.mismatch:
@@ -673,6 +683,75 @@ class Simulation:
                         f"{a.vendor} ({a.protocol}) {'reconnected' if online else 'went OFFLINE - no new missions can be sent'}")
         return True
 
+    # ------------------------------------------------------------ operator controls (real-time site management)
+    def set_paused(self, paused: bool):
+        self.paused = paused
+        self.events.add(self.sim_time, "error" if paused else "ok", "control",
+                        "FLEET PAUSED by operator - all robots holding position" if paused else "Fleet resumed by operator")
+
+    def set_aisle(self, row: int, closed: bool) -> bool:
+        if not 0 <= row < len(self.grid.aisles):
+            return False
+        cells = self.grid.aisles[row]
+        if closed:
+            self.grid.closed |= cells
+            self.closed_rows.add(row)
+        else:
+            self.grid.closed -= cells
+            self.closed_rows.discard(row)
+        self.events.add(self.sim_time, "warn" if closed else "ok", "control",
+                        f"Aisle A{row + 1} {'CLOSED for maintenance - traffic rerouted, orders there wait' if closed else 're-opened'}")
+        self._replan_all()
+        return True
+
+    def _replan_all(self):
+        """Layout changed: every moving ground robot gets a fresh route (through its vendor adapter)."""
+        for r in self._order:
+            if r.flying or not r.path or r.state not in ("moving", "to_charge"):
+                continue
+            goal = r.path[-1]
+            start = r.path[0] if r.frac > 0 else r.cell           # mid-cell: keep the cell it is entering
+            path = astar(self.grid, start, goal, False)
+            if path is not None:
+                new = ([r.path[0]] + path) if r.frac > 0 else path
+                frac = r.frac
+                self._send_path(r, new, goal, "reroute", r.state)
+                r.frac = frac
+
+    def charge_now(self, rid: str) -> bool:
+        r = self.robots.get(rid)
+        if r is None or r.state != "idle" or r.task_id is not None:
+            return False
+        before = r.state
+        self._send_to_charge(r)
+        return r.state != before
+
+    def alerts(self) -> list:
+        """Conditions that need attention right now (recomputed every snapshot)."""
+        out = []
+        for r in self._order:
+            if r.state == "fault":
+                out.append({"level": "error", "title": f"{r.id} out of service", "detail": f"repair in {max(0, r.repair_at - self.sim_time):.0f}s", "robot": r.id})
+            elif r.battery < self.critical:
+                out.append({"level": "error", "title": f"{r.id} battery critical", "detail": f"{r.battery:.0f}%", "robot": r.id})
+            elif r.blocked_for >= 30:
+                out.append({"level": "warn", "title": f"{r.id} waiting in traffic", "detail": f"{r.blocked_for:.0f}s for {r.blocked_by}", "robot": r.id})
+        for a in self.adapters.values():
+            if not a.online:
+                out.append({"level": "error", "title": f"{a.vendor} offline", "detail": f"{a.protocol} - no new missions", "robot": None})
+        if self.paused:
+            out.insert(0, {"level": "error", "title": "Fleet paused", "detail": "all robots holding position", "robot": None})
+        for row in sorted(self.closed_rows):
+            out.append({"level": "warn", "title": f"Aisle A{row + 1} closed", "detail": "maintenance - traffic rerouted", "robot": None})
+        late = [t for t in self.tasks.values() if self.sim_time - t.created > self.sla_s]
+        if late:
+            out.append({"level": "warn", "title": f"{len(late)} order(s) past SLA", "detail": f"older than {self.sla_s // 60} min", "robot": None})
+        return out[:12]
+
+    def heatmap(self) -> dict:
+        cells = [[x, y, round(v, 1)] for (x, y), v in self.heat.items() if v >= 1.0]
+        return {"cells": cells, "max": max((c[2] for c in cells), default=0)}
+
     # ------------------------------------------------------------ manual control
     def goto(self, robot_id: str, x: int, y: int):
         r = self.robots.get(robot_id)
@@ -706,6 +785,8 @@ class Simulation:
             "faults": s["faults"], "reassigned": s["reassigned"], "preempted": s["preempted"], "evasions": s["evasions"],
             "traffic_delay_min": round(s["traffic_delay"] / 60.0, 1),
             "completed_in_shift": s["completed_in_shift"], "operator_interventions": s["operator"],
+            "on_time_pct": round(100.0 * s["on_time"] / s["completed"], 1) if s["completed"] else 100.0, "sla_s": self.sla_s,
+            "dispatched": s["started"], "commands": s["commands"], "messages": self.bus.seq,
             "util_by_type": self._util_by_type(),
         }
 
@@ -741,7 +822,8 @@ class Simulation:
         return {
             "t": round(now, 1), "scale": self.time_scale, "shift": self.shift_len,
             "auto_orders": self.auto_orders, "allocator": self.allocator.name, "seed": self.seed,
-            "mode": self.mode, "site": self.cfg.get("name"),
+            "mode": self.mode, "site": self.cfg.get("name"), "paused": self.paused,
+            "closed_rows": sorted(self.closed_rows), "alerts": self.alerts(),
             "robots": [r.to_dict() for r in self.robots.values()],
             "tasks": live[:80], "recent": [t.to_dict(now) for t in list(self.recent)[:15]],
             "kpis": self.kpis(), "vendors": self.vendors(),

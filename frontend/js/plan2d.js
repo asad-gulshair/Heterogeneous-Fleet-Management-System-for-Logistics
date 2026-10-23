@@ -43,11 +43,22 @@ export class Plan2D {
     });
   }
   update(snap) { this.snap = snap; }
+  setHeat(data) { this.heatData = data; }
   _frame() {
     this.raf = requestAnimationFrame(this._frame);
     if (!this.active || !this.snap || !this.cell) return;
     const g = this.ctx, c = this.cell, S = this.snap, types = this.map.types, sel = this.getSelected();
     g.setTransform(1, 0, 0, 1, 0, 0); g.drawImage(this.floor, 0, 0); g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    if (this.heatData) {                                   // congestion heatmap: where robots wait for each other
+      const mx = Math.max(1, this.heatData.max);
+      for (const [x, y, v] of this.heatData.cells) { const k = Math.log1p(v) / Math.log1p(mx); g.fillStyle = `hsla(${58 - 58 * k},100%,50%,.55)`; g.fillRect(x * c, y * c, c, c); }
+    }
+    for (const row of S.closed_rows || []) {               // aisle closed for maintenance
+      const a = (this.map.aisles || [])[row]; if (!a) continue;
+      g.save(); g.fillStyle = 'rgba(245,197,66,.22)'; g.fillRect(a[0] * c, a[1] * c, a[2] * c, a[3] * c);
+      g.strokeStyle = '#f5c542'; g.setLineDash([6, 4]); g.lineWidth = 2; g.strokeRect(a[0] * c, a[1] * c, a[2] * c, a[3] * c);
+      g.fillStyle = '#f5c542'; g.font = `700 ${Math.max(9, c * .55)}px Inter,sans-serif`; g.textBaseline = 'middle'; g.fillText(`A${row + 1} · MAINTENANCE`, a[0] * c + 6, (a[1] + a[3] / 2) * c); g.restore();
+    }
     for (const t of S.tasks) if (t.status === 'queued') {
       const x = (t.pickup[0] + .5) * c, y = (t.pickup[1] + .5) * c, R = Math.max(5, c * .32);
       g.fillStyle = KC[t.kind] + '33'; g.strokeStyle = KC[t.kind]; g.lineWidth = 1.3; this._rr(g, x - R, y - R, R * 2, R * 2, 3); g.fill(); g.stroke();

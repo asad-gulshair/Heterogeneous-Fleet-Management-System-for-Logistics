@@ -25,6 +25,14 @@ class Grid:
             n = cfg.get("charging_bays", len([c for c in cand if c[1] == z["y"] + z["h"] - 1]))
             self.chargers = cand[:max(1, min(n, len(cand)))]
 
+        # Aisles: the two-cell lane in front of each shelf row (index = row, 0 = A1). Can be closed for maintenance.
+        self.aisles = []
+        for s in sorted(self.shelves, key=lambda s: s["y"]):
+            cells = {(x, y) for x in range(s["x"], s["x"] + s["w"]) for y in (s["y"] + s["h"], s["y"] + s["h"] + 1)
+                     if 0 <= y < self.height and (x, y) not in self.blocked}
+            self.aisles.append(cells)
+        self.closed: set = set()        # cells closed for maintenance (very expensive for A*, never a work site)
+
     def in_bounds(self, x: int, y: int) -> bool:
         return 0 <= x < self.width and 0 <= y < self.height
 
@@ -64,4 +72,6 @@ class Grid:
             "shelves": self.shelves,
             "zones": self.zones,
             "chargers": [list(c) for c in self.chargers],
+            "aisles": [[min(c[0] for c in a), min(c[1] for c in a), max(c[0] for c in a) - min(c[0] for c in a) + 1,
+                        max(c[1] for c in a) - min(c[1] for c in a) + 1] if a else None for a in self.aisles],
         }

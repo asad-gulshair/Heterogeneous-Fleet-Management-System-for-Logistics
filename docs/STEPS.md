@@ -74,3 +74,14 @@ Honest finding: with real traffic, the allocator (greedy vs Hungarian) changes a
 4. (2:00) Click the mode pill -> separate managers: watch congestion and operator interventions grow.
 5. (2:40) Compare page - headline numbers. What-if: add two tote AMRs at peak volume -> ROI and payback.
 6. (3:40) API page + `/docs`: "any WMS can submit orders". Close on the shift report.
+
+
+## v1.1 - client readiness
+1. **Navigation bug fixed**: the left menu buttons had no click handler (pages only opened via URL). Every page now opens from the menu; verified by clicking at 1366×768, 1536×864 and 1920×1080.
+2. **Windows fix**: `.js` / `.css` MIME types registered explicitly (some Windows registries serve `.js` as `text/plain`, which blocks ES modules).
+3. **No overlapping text**: safety strip stacks value over label, header collapses labels below 1500 px, KPI sub-lines rewritten, parked robots get small faint markers.
+4. **Realistic material flow in 3D**: real shelf slots empty when picked and restock later; cartons fly into the tote bin, onto the packing table and along the conveyor; lift takes cartons from the top level and hands them to the tote; waiting pallets drawn at their real pickup cell, carried on the forks, stacked at the dock, truck departs when 6 are staged.
+5. **Real-time operations**: fleet pause (emergency), aisle maintenance closure (high A* cost + orders wait), send-to-charger, live alerts, congestion heatmap (`/api/heatmap`), on-time KPI (SLA 10 min).
+6. **Overview page** for clients (vendor health, live pipeline counters, alerts, proven value).
+7. **Scale**: `warehouse_xl.yaml`, 40 robots. Full 8 h shifts: ~4,100-4,250 orders, 0 collisions, 0 permanent deadlocks, TusCore cycle -12 %, traffic -76 %, operator interventions 94 -> 0.
+8. **3D performance**: shadow map refreshed every 5th frame, pixel ratio capped at 1.5, automatic low-quality mode (no shadows) if a machine renders < 22 fps.

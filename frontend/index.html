@@ -13,11 +13,11 @@
 <div class="app">
   <header>
     <div class="brand"><img src="assets/tuscore-mark.svg" alt="TusCore"><b>Tus<i>Core</i></b><small class="hide-sm">Fleet Console</small></div>
-    <div class="site hide-sm"><span class="lbl">Site</span><select id="layoutSel" title="Warehouse layout"></select></div>
-    <span class="pill mode-t" id="modePill" title="How the fleet is managed">TusCore · one manager</span>
+    <div class="site hide-sm"><span class="lbl hide-md">Site</span><select id="layoutSel" title="Warehouse layout"></select></div>
+    <span class="pill mode-t" id="modePill" title="How the fleet is managed"><span id="modeTxt">TusCore · one manager</span></span>
     <div class="spacer"></div>
-    <span class="lbl hide-sm">Allocator</span>
-    <div class="seg hide-sm" id="alloc"><button data-a="greedy">Greedy</button><button data-a="hungarian">Hungarian</button></div>
+    <span class="lbl hide-md">Allocator</span>
+    <div class="seg hide-md" id="alloc"><button data-a="greedy">Greedy</button><button data-a="hungarian">Hungarian</button></div>
     <div class="clock mono"><small id="shiftlbl">Shift 0%</small><span id="clock">00:00:00</span></div>
     <div class="seg" id="speed"><button data-s="1">1×</button><button data-s="10">10×</button><button data-s="60">60×</button><button data-s="300">300×</button></div>
     <span class="pill" id="live"><span class="d"></span><span id="livetxt">Connecting</span></span>
@@ -25,6 +25,7 @@
 
   <nav id="nav">
     <button data-p="ops" class="on" title="Live operations"><svg viewBox="0 0 24 24"><path d="M3 21V9l9-6 9 6v12"/><path d="M8 21v-6h8v6"/><path d="M3 9h18"/></svg>Live</button>
+    <button data-p="overview" title="Fleet overview"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>Overview<i class="navbadge" id="navAlerts"></i></button>
     <button data-p="analytics" title="Analytics"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>Analytics</button>
     <button data-p="compare" title="Scenario comparison"><svg viewBox="0 0 24 24"><path d="M7 4v16M17 4v16M3 8h8M13 14h8"/><circle cx="7" cy="8" r="2"/><circle cx="17" cy="14" r="2"/></svg>Compare</button>
     <button data-p="whatif" title="What-if and ROI"><svg viewBox="0 0 24 24"><path d="M12 2v4M12 18v4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M2 12h4M18 12h4"/><circle cx="12" cy="12" r="4"/></svg>What-if</button>
@@ -48,10 +49,14 @@
           <div class="hd">
             <h2>Digital twin</h2>
             <div class="seg" id="viewSeg"><button data-v="3d" class="on">3D</button><button data-v="2d">2D plan</button></div>
-            <span class="hint hide-sm" id="twinHint">Drag to orbit · scroll to zoom · click a robot</span>
             <span class="spacer"></span>
-            <button class="btn" id="autoBtn">Auto orders: ON</button>
-            <button class="btn" id="resetBtn">Reset shift</button>
+            <div class="tools">
+              <button class="btn sm" id="heatBtn" title="Show where robots lose time waiting for each other">Heatmap</button>
+              <select id="aisleSel" title="Close or re-open an aisle for maintenance"></select>
+              <button class="btn sm danger" id="pauseBtn" title="Stop every robot where it is (orders keep queuing)">Pause fleet</button>
+              <button class="btn sm" id="autoBtn" title="Automatic order stream">Orders: auto</button>
+              <button class="btn sm" id="resetBtn" title="Restart the shift">Reset</button>
+            </div>
           </div>
           <div class="twin" id="twin">
             <div id="view3d" style="position:absolute;inset:0"></div>
@@ -61,6 +66,9 @@
               <button class="btn sm" data-cam="follow">Follow</button><button class="btn sm" data-cam="orbit">Auto-orbit</button>
             </div>
             <div class="overlay banner" id="modeBanner">Separate managers: each vendor's manager sees only its own robots</div>
+            <div class="overlay pausebar" id="pauseBar">FLEET PAUSED · all robots holding position <button class="btn sm" id="resumeBtn">Resume</button></div>
+            <div class="overlay heatlegend" id="heatLegend"><span>Waiting time</span><i></i><span>low → high</span></div>
+            <div class="overlay twinhint" id="twinHint"></div>
             <div class="overlay legend" id="legend"></div>
             <div class="overlay" id="tip"></div>
           </div>
@@ -71,6 +79,26 @@
           <div class="panel" id="panel"></div>
         </div>
       </div>
+    </section>
+
+    <!-- ================= OVERVIEW ================= -->
+    <section class="page" id="p-overview">
+      <div class="hero">
+        <div class="hero-txt">
+          <span class="lbl" style="color:var(--cyan2)">TusCore · heterogeneous fleet management</span>
+          <h1>One platform for every robot on your floor</h1>
+          <p>Robots from different vendors, speaking different protocols, coordinated as one fleet: the right robot for every order,
+             safe shared traffic, automatic recovery from faults - and one live view of everything.</p>
+        </div>
+        <div class="hero-stats" id="ovStats"></div>
+      </div>
+      <div class="ovv" id="ovVendors"></div>
+      <div class="two" style="margin-top:14px">
+        <div class="card"><div class="hd"><h2>How TusCore runs the site - live</h2><span class="hint">every number updates in real time</span></div><div class="bd"><div class="flow" id="ovFlow"></div></div></div>
+        <div class="card"><div class="hd"><h2>Needs attention now</h2><span class="spacer"></span><span class="badge" id="ovAlertCount">0</span></div><div class="bd" id="ovAlerts" style="max-height:330px;overflow:auto"></div></div>
+      </div>
+      <div class="card" style="margin-top:14px"><div class="hd"><h2>Proven value</h2><span class="hint" id="ovValueMeta">from the latest scenario comparison</span><span class="spacer"></span><a class="btn sm" href="#compare">See the comparison</a></div>
+        <div class="bd"><div class="headlines" id="ovValue"></div></div></div>
     </section>
 
     <!-- ================= ANALYTICS ================= -->
@@ -163,6 +191,7 @@
 
   <footer><span>TusCore Fleet Console · v1.0 · simulated digital twin</span><span class="pw"><img src="assets/tusmec-mark.svg" alt="">Powered by <b>Tusmec</b></span></footer>
 </div>
+<div class="toast" id="toast"></div>
 <script type="module" src="js/app.js"></script>
 </body>
 </html>

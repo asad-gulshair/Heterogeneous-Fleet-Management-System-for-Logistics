@@ -107,3 +107,41 @@ def test_api_end_to_end_single_control_point():
     assert len(c.get("/api/layouts").json()) >= 2
     assert c.post("/api/sim/mode", json={"mode": "separate"}).json()["mode"] == "separate"
     assert c.post("/api/sim/mode", json={"mode": "tuscore"}).json()["mode"] == "tuscore"
+
+
+def test_operator_controls_pause_aisle_charge_heatmap():
+    from fastapi.testclient import TestClient
+    from app import main
+    c = TestClient(main.app)
+    c.post("/api/sim/reset", json={"seed": 2})
+    for _ in range(200):
+        main.sim._step(0.5)
+    assert c.post("/api/aisles/1", json={"closed": True}).status_code == 200
+    for _ in range(300):
+        main.sim._step(0.5)
+    assert not any(r.cell in main.sim.grid.closed for r in main.sim.robots.values() if r.state == "working")
+    c.post("/api/fleet/pause", json={"enabled": True})
+    before = {r.id: r.cell for r in main.sim.robots.values()}
+    for _ in range(50):
+        main.sim._step(0.5)
+    assert before == {r.id: r.cell for r in main.sim.robots.values()}
+    c.post("/api/fleet/pause", json={"enabled": False})
+    c.post("/api/aisles/1", json={"closed": False})
+    assert c.get("/api/heatmap").status_code == 200
+    assert isinstance(c.get("/api/fleet").json()["alerts"], list)
+    idle = next(r for r in main.sim.robots.values() if r.state == "idle" and r.task_id is None)
+    assert c.post(f"/api/robots/{idle.id}/charge").status_code in (200, 409)
+
+
+def test_js_served_as_javascript():
+    from fastapi.testclient import TestClient
+    from app import main
+    assert "javascript" in TestClient(main.app).get("/js/app.js").headers["content-type"]
+
+
+def test_forty_robot_layout_is_safe():
+    xl = os.path.join(os.path.dirname(CFG), "warehouse_xl.yaml")
+    sim = Simulation(xl, seed=3, overrides={"shift_hours": 0.5})
+    assert len(sim.robots) == 40
+    k = sim.run_headless()
+    assert k["collisions"] == 0 and k["permanent_deadlocks"] == 0 and k["completed"] == k["created"]

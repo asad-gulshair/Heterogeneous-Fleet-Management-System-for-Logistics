@@ -7,6 +7,7 @@ runs (comparison, what-if) use separate worker processes and never touch the liv
 import asyncio
 import csv
 import io
+import mimetypes
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -23,7 +24,13 @@ from .mqtt_bridge import MqttBridge
 from .orders import KINDS
 from .sim import Simulation
 
-VERSION = "1.0"
+VERSION = "1.1"
+
+# Windows can map .js to text/plain in its registry; browsers then refuse to run ES modules.
+# Register the correct types explicitly so the console works on every machine.
+for _ext, _type in ((".js", "application/javascript"), (".mjs", "application/javascript"), (".css", "text/css"),
+                    (".svg", "image/svg+xml"), (".json", "application/json"), (".html", "text/html")):
+    mimetypes.add_type(_type, _ext)
 ROOT = Path(__file__).resolve().parents[2]            # .../tuscore
 CONFIG_DIR = ROOT / "config"
 CONFIG = Path(os.environ.get("TUSCORE_CONFIG", str(CONFIG_DIR / "warehouse.yaml")))
@@ -150,6 +157,7 @@ async def system():
 @app.get("/api/map", tags=["fleet"], summary="Warehouse map and robot types")
 async def get_map():
     return {"name": sim.cfg.get("name"), **sim.grid.to_dict(), "types": sim.types_meta(), "kinds": KINDS,
+            "dwell_s": sim.cfg["orders"]["dwell_s"], "sla_s": sim.sla_s,
             "layout": Path(sim.config_path).name, "mode": sim.mode}
 
 
@@ -272,6 +280,38 @@ async def vendor_online(vendor_id: str, body: ToggleIn):
     """Simulate a vendor outage / reconnect. While offline no NEW missions are sent to that vendor's robots."""
     if not sim.set_vendor_online(vendor_id, body.enabled):
         raise HTTPException(404, "unknown vendor")
+    return {"ok": True}
+
+
+class AisleIn(BaseModel):
+    closed: bool
+
+
+@app.get("/api/heatmap", tags=["analytics"], summary="Congestion heatmap (where robots wait)")
+async def heatmap():
+    """Seconds robots spent waiting for a free cell, per cell, this shift."""
+    return sim.heatmap()
+
+
+@app.post("/api/fleet/pause", tags=["control"], summary="Pause / resume the whole fleet")
+async def pause(body: ToggleIn):
+    """Emergency-style pause: every robot holds position; orders keep queuing. enabled=true pauses."""
+    sim.set_paused(body.enabled)
+    return {"paused": sim.paused}
+
+
+@app.post("/api/aisles/{row}", tags=["control"], summary="Close / re-open an aisle for maintenance")
+async def aisle(row: int, body: AisleIn):
+    """Closed aisles are avoided by route planning; orders located there wait until it re-opens."""
+    if not sim.set_aisle(row, body.closed):
+        raise HTTPException(404, "unknown aisle")
+    return {"closed_rows": sorted(sim.closed_rows)}
+
+
+@app.post("/api/robots/{robot_id}/charge", tags=["control"], summary="Send an idle robot to a charger")
+async def charge(robot_id: str):
+    if not sim.charge_now(robot_id):
+        raise HTTPException(409, "robot is not idle or no charger is free")
     return {"ok": True}
 
 

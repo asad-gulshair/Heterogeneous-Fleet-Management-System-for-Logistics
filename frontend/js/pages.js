@@ -1,5 +1,5 @@
 // Analytics, Scenario comparison, What-if / ROI and Integration pages.
-import { $, api, S, fmtT, KC } from './app.js';
+import { $, api, S, fmtT, KC, glyph } from './app.js';
 
 const C = { text: '#93a8cc', grid: 'rgba(120,160,255,.10)' };
 let charts = {}, timer = null, inited = {};
@@ -29,7 +29,14 @@ function chart(id, cfg) { if (charts[id]) { charts[id].destroy(); } charts[id] =
 export function initPages() {
   $('cmpRun').onclick = runCompare; $('wiRun').onclick = runWhatIf;
   $('wiLoad').oninput = e => $('wiLoadLbl').textContent = '×' + (+e.target.value).toFixed(2);
-  S.listeners.push(what => { if (what === 'map') inited.whatif = false; });
+  S.listeners.push(what => {
+    if (what === 'map') inited.whatif = false;
+    if (what === 'snap' && S.page === 'overview' && Date.now() - (S.lastOv || 0) > 900) { S.lastOv = Date.now(); renderOverview(); }
+  });
+  $('ovAlerts').addEventListener('click', e => {
+    const b = e.target.closest('[data-robot]'); if (!b) return;
+    location.hash = 'ops'; setTimeout(() => { const row = document.querySelector(`.rob[data-id="${b.dataset.robot}"]`); if (row) row.click(); }, 150);
+  });
 }
 
 export function showPage(p) {
@@ -38,6 +45,7 @@ export function showPage(p) {
   if (p === 'compare' && !inited.compare) { inited.compare = true; loadLatest('comparison', renderCompare); }
   if (p === 'whatif' && !inited.whatif) { inited.whatif = true; buildWhatIf(); loadLatest('whatif', renderWhatIf); }
   if (p === 'integration') renderIntegration();
+  if (p === 'overview') { renderOverview(); api.get('/api/experiments/latest/comparison').then(r => { ovValue = r; renderOverview(); }).catch(() => {}); }
 }
 async function loadLatest(kind, render) { try { const r = await api.get('/api/experiments/latest/' + kind); if (r) render(r); } catch (e) { /* none yet */ } }
 
@@ -187,4 +195,55 @@ async function renderIntegration() {
     <div class="kv"><b>Layout</b><span>${sys.site} (${sys.layout})</span></div>
     <div class="kv"><b>Experiment workers</b><span>${sys.experiment_workers} CPU cores</span></div>` +
     v.map(x => `<div class="kv"><b>${x.vendor}</b><span class="mono">${x.protocol} · ${x.online ? 'online' : 'offline'}</span></div>`).join('');
+}
+
+// ------------------------------------------------------------------ overview (client-facing)
+let ovValue = null;
+const CAP_KINDS = { carry_tote: ['box_pick', 'high_pick'], high_pick: ['high_pick'], move_pallet: ['pallet_move'], scan: ['inventory_scan'] };
+const STATE_GROUP = r => ['moving', 'working', 'waiting'].includes(r.state) ? 'busy' : ['charging', 'to_charge'].includes(r.state) ? 'charging' : r.state === 'fault' ? 'fault' : 'idle';
+const GROUP_COL = { busy: '#2E9FE8', charging: '#3ddc97', idle: '#5f769f', fault: '#ff5d6c' };
+function renderOverview() {
+  const D = S.SNAP; if (!D || !S.MAP) return;
+  const k = D.kpis, R = D.robots, online = R.filter(r => r.state !== 'fault').length;
+  const vOn = D.vendors.filter(v => v.online).length;
+  const hs = (v, l) => `<div class="hs"><b>${v}</b><span>${l}</span></div>`;
+  $('ovStats').innerHTML = hs(`${online}/${R.length}`, 'robots online') + hs(`${vOn}/${D.vendors.length}`, 'vendors connected') +
+    hs(new Set(D.vendors.map(v => v.protocol)).size, 'protocols, one core') + hs(k.completed.toLocaleString(), 'orders done this shift') +
+    hs(`${k.on_time_pct}%`, `on time (≤ ${Math.round(k.sla_s / 60)} min)`) + hs(k.collisions, 'collisions');
+  $('ovVendors').innerHTML = D.vendors.map(v => {
+    const t = S.MAP.types[v.id], mine = R.filter(r => r.type === v.id), g = { busy: 0, charging: 0, idle: 0, fault: 0 };
+    mine.forEach(r => g[STATE_GROUP(r)]++);
+    const kinds = new Set((t.capabilities || []).flatMap(c => CAP_KINDS[c] || []));
+    const jobs = [...kinds].reduce((a, kk) => a + (k.by_kind[kk] || 0), 0);
+    const bat = mine.length ? Math.round(mine.reduce((a, r) => a + r.battery, 0) / mine.length) : 0;
+    return `<div class="vcard" style="--vc:${t.color}"><div class="vh"><span class="ic" style="background:${t.color}">${glyph(v.id)}</span><div><b>${v.vendor}</b><small>${t.label} · ${v.protocol}</small></div>
+      <span class="on-dot ${v.online ? '' : 'off'}" style="margin-left:auto"><i></i>${v.online ? 'Online' : 'Offline'}</span></div>
+      <div class="big">${g.busy}<small> of ${mine.length} working now</small></div>
+      <div class="stack">${Object.entries(g).map(([kk, n]) => n ? `<i style="width:${100 * n / Math.max(1, mine.length)}%;background:${GROUP_COL[kk]}"></i>` : '').join('')}</div>
+      <div class="vlegend">${Object.entries(g).map(([kk, n]) => `<span><em style="background:${GROUP_COL[kk]}"></em>${n} ${kk}</span>`).join('')}</div>
+      <div class="kv" style="margin-top:8px"><b>Jobs done</b><span>${jobs.toLocaleString()}</span></div>
+      <div class="kv"><b>Utilization</b><span>${Math.round((k.util_by_type || {})[v.id] || 0)}%</span></div>
+      <div class="kv"><b>Avg battery</b><span>${bat}%</span></div></div>`;
+  }).join('');
+  const step = (n, title, text, val, unit) => `<div class="step"><span class="n">${n}</span><b>${title}</b><p>${text}</p><div class="ctr">${val.toLocaleString()}<small>${unit}</small></div></div>`;
+  $('ovFlow').innerHTML =
+    step(1, 'Orders come in', 'From the WMS / ERP over the REST API, or generated by the twin.', k.created, 'orders received') +
+    step(2, 'Right robot for the job', 'Capability-based allocation across all vendors (Hungarian).', k.dispatched, 'assignments') +
+    step(3, 'Plan & reserve the route', 'A* with lanes; every cell reserved before a robot enters it.', k.commands, 'routes sent') +
+    step(4, "Speak each vendor's protocol", 'VDA 5050, REST, TCP/JSON, MAVLink - translated by adapters.', k.messages, 'wire messages') +
+    step(5, 'Watch & recover', 'Deadlocks, faults, low batteries and outages handled automatically.', k.deadlocks + k.reassigned + k.evasions, 'auto-recoveries');
+  const A = D.alerts || [];
+  $('ovAlertCount').textContent = A.length;
+  $('ovAlerts').innerHTML = A.map(a => `<div class="alert"><span class="sv ${a.level}"></span><div><b>${a.title}</b><small>${a.detail}</small></div>${a.robot ? `<button class="btn sm" data-robot="${a.robot}">Show</button>` : ''}</div>`).join('') ||
+    '<div class="empty"><b>All clear</b>No faults, outages, blocked robots or late orders right now.</div>';
+  if (ovValue && ovValue.summary) {
+    const a = ovValue.summary.A, b = ovValue.summary.B, d = ovValue.delta_pct, m = ovValue.meta;
+    const head = (label, val, sub, cls = '') => `<div class="headline"><label>${label}</label><div class="big ${cls}">${val}</div><div class="sub">${sub}</div></div>`;
+    const sign = v => (v > 0 ? '+' : '') + v + '%';
+    $('ovValueMeta').textContent = `${m.runs} × ${m.shift_hours} h shifts per scenario · order volume ×${m.load_factor} · separate vendor managers vs one TusCore`;
+    $('ovValue').innerHTML = head('Faster orders', sign(d.avg_cycle), `cycle ${Math.round(a.avg_cycle.mean)} s → ${Math.round(b.avg_cycle.mean)} s`) +
+      head('Less waiting', sign(d.avg_wait), `${Math.round(a.avg_wait.mean)} s → ${Math.round(b.avg_wait.mean)} s before a robot starts`) +
+      head('Less congestion', sign(d.traffic_delay_min), `${Math.round(a.traffic_delay_min.mean)} → ${Math.round(b.traffic_delay_min.mean)} robot-min lost per shift`) +
+      head('No manual rescue', `${Math.round(a.operator_interventions.mean)} → ${Math.round(b.operator_interventions.mean)}`, 'operator interventions per shift', 'neu');
+  }
 }

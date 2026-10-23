@@ -1,0 +1,124 @@
+# TusCore warehouse layout - 40-robot scale demonstration (same code, only this file differs). Change this file to get a new layout - no code changes needed.
+name: "Mega DC (scale demo)"
+width: 100
+height: 64
+
+# Shelves are obstacles for ground robots (the drone flies over them).
+# Each rect: x,y = top-left cell, w,h = size in cells.
+shelves:
+  - {x: 8,  y: 5, w: 50, h: 2}
+  - {x: 8,  y: 9, w: 50, h: 2}
+  - {x: 8,  y: 13, w: 50, h: 2}
+  - {x: 8,  y: 17, w: 50, h: 2}
+  - {x: 8,  y: 21, w: 50, h: 2}
+  - {x: 8,  y: 25, w: 50, h: 2}
+  - {x: 8,  y: 29, w: 50, h: 2}
+  - {x: 8,  y: 33, w: 50, h: 2}
+  - {x: 8,  y: 37, w: 50, h: 2}
+  - {x: 8,  y: 41, w: 50, h: 2}
+
+# Zones are walkable floor areas with a label.
+zones:
+  pallet_area:   {x: 68, y: 4,  w: 26, h: 20, color: "#3b4a6b"}
+  packing_1:     {x: 4,  y: 52, w: 12, h: 6,  color: "#1f6f5c"}
+  packing_2:     {x: 22, y: 52, w: 12, h: 6,  color: "#1f6f5c"}
+  loading_dock:  {x: 84, y: 34, w: 14, h: 26, color: "#7a5a1f"}
+  charging_area: {x: 44, y: 54, w: 26, h: 8,  color: "#2E9FE8"}
+
+charging_bays: 12
+
+# Robot types. count = how many are spawned. speed = cells/second.
+# capabilities = which task roles the robot can fill. battery_kwh = pack size (for the energy KPI).
+robot_types:
+  tote_amr:
+    adapter: vda5050        # translator to the vendor's own protocol
+    priority: 1           # higher wins contested cells (pallets first in narrow aisles)
+    latency_ms: 35
+    label: "Tote AMR"
+    vendor: "Vendor A"
+    interface: "VDA 5050 / MQTT"
+    count: 22
+    speed: 1.0
+    flying: false
+    capabilities: [carry_tote]
+    battery_kwh: 1.2
+    color: "#2E9FE8"
+    shape: circle
+  scissor_lift:
+    adapter: rest        # translator to the vendor's own protocol
+    priority: 2           # higher wins contested cells (pallets first in narrow aisles)
+    latency_ms: 60
+    label: "Scissor-lift AMR (TL-65)"
+    vendor: "Tusmec"
+    interface: "REST API"
+    count: 8
+    speed: 0.7
+    flying: false
+    capabilities: [high_pick]
+    battery_kwh: 2.0
+    color: "#f5a524"
+    shape: square
+  pallet_stacker:
+    adapter: tcp_json        # translator to the vendor's own protocol
+    priority: 3           # higher wins contested cells (pallets first in narrow aisles)
+    latency_ms: 15
+    label: "Pallet stacker AGV"
+    vendor: "Vendor C"
+    interface: "TCP / JSON"
+    count: 6
+    speed: 0.5
+    flying: false
+    capabilities: [move_pallet]
+    battery_kwh: 4.0
+    color: "#e5484d"
+    shape: triangle
+  drone:
+    adapter: mavlink        # translator to the vendor's own protocol
+    priority: 0           # higher wins contested cells (pallets first in narrow aisles)
+    latency_ms: 10
+    label: "Inventory drone"
+    vendor: "Vendor D"
+    interface: "MAVLink-style"
+    count: 4
+    speed: 2.0
+    flying: true
+    capabilities: [scan]
+    battery_kwh: 0.15
+    color: "#46a758"
+    shape: diamond
+
+# Shift + order generation (Poisson arrivals, reproducible via seed).
+shift:
+  length_s: 28800        # 8 hours of simulated time
+  seed: 42
+orders:
+  rate_per_hour: {box_pick: 350, high_pick: 90, pallet_move: 60, inventory_scan: 20}
+  dwell_s: {pick: 3, drop: 2, high_pick: 6, handoff: 2, pallet_pick: 4, pallet_drop: 4, scan: 1}
+  scan_mismatch_prob: 0.08
+
+# Battery model (percent).
+battery:
+  drain_per_cell: 0.02      # % lost per cell moved
+  charge_rate_per_s: 1.5    # % gained per simulated second on a charger bay
+  low_threshold: 30         # below this a robot stops taking tasks and goes to charge
+  critical_threshold: 12    # below this it charges immediately, ignoring the staggering rule
+  opportunistic_threshold: 50   # idle robots below this top up if no order is waiting for their skills
+  resume_threshold: 90      # leaves the charger at this level
+
+# Faults: each robot fails randomly (Poisson, mean time between failures) and is repaired later.
+faults:
+  mtbf_hours: 6.0           # 0 = no random faults (you can still inject them from the console)
+  repair_s: 120
+
+# Traffic management
+traffic:
+  block_s: 0.5              # a robot waiting this long for a cell is "stuck" and checked for deadlock
+  replan_s: 3.0             # re-plan around standing robots after this long
+  watchdog_s: 300           # safety net: a robot stuck this long is declared faulted (should never happen)
+
+# Scenario A of the comparison: every vendor runs its OWN fleet manager (today's typical setup).
+# These are modelling assumptions - change them and re-run the comparison.
+separate_managers:
+  operator_response_s: 90       # a cross-vendor deadlock is invisible to both managers until an operator clears it
+  wms_handoff_delay_s: 20       # lift done -> WMS notices -> creates the tote job in the other vendor's manager
+  chargers_per_vendor: {tote_amr: 6, scissor_lift: 3, pallet_stacker: 2, drone: 1}   # dedicated chargers

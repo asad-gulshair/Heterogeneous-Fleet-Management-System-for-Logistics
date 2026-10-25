@@ -83,7 +83,7 @@ backend/app/
 backend/tests/     python -m pytest -q
 backend/scripts/run_shift.py   headless 8 h shift in ~6 s
 frontend/          TusCore Fleet Console (Three.js 3D twin, Chart.js analytics - bundled, works offline)
-docs/              STEPS.md (build log), REQUIREMENTS.md (brief vs implementation), REAL_WORLD.md (live-site architecture)
+docs/              TusCore_Technical_Report.pdf, STEPS.md (build log), REQUIREMENTS.md (brief vs implementation), REAL_WORLD.md (live-site architecture)
 ```
 
 ## Tests

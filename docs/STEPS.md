@@ -85,3 +85,12 @@ Honest finding: with real traffic, the allocator (greedy vs Hungarian) changes a
 6. **Overview page** for clients (vendor health, live pipeline counters, alerts, proven value).
 7. **Scale**: `warehouse_xl.yaml`, 40 robots. Full 8 h shifts: ~4,100-4,250 orders, 0 collisions, 0 permanent deadlocks, TusCore cycle -12 %, traffic -76 %, operator interventions 94 -> 0.
 8. **3D performance**: shadow map refreshed every 5th frame, pixel ratio capped at 1.5, automatic low-quality mode (no shadows) if a machine renders < 22 fps.
+
+### v1.2 - realistic carton handling in the 3D twin
+- Tote AMR has a telescopic handling unit: the mast rises to the shelf level, two side arms reach into the rack,
+  the carton is pulled straight onto the tray and lowered into the robot's bin (no flying boxes).
+- The carton keeps its own colour and size from shelf slot to bin to conveyor.
+- At packing the robot docks side-on at the conveyor, lifts the carton to belt height and pushes it onto the rollers.
+  The carton rides into the PACK & SHIP tunnel and leaves the twin there.
+- Scissor lift: carton slides straight out of the top level onto the raised platform; hand-over slides it across into the tote AMR's bin.
+- Visual only: the simulation, its KPIs and all results are unchanged.

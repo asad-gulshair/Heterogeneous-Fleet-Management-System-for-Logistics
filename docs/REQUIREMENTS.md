@@ -1,6 +1,6 @@
 # Brief vs implementation - checklist
 
-Status as of v1.0. "Verified" = checked by an automated test, a headless full-shift run, or in the browser.
+Status as of v1.1. "Verified" = checked by an automated test, a headless full-shift run, or in the browser.
 
 ## Scenario
 | Requirement | Where | Status |
@@ -49,8 +49,9 @@ Status as of v1.0. "Verified" = checked by an automated test, a headless full-sh
 | What-if tool: robot counts or layout → KPI impact | What-if page (+ ROI) | Verified (browser) |
 | Small REST API to submit orders and read fleet status | `/api/orders`, `/api/fleet`, … ; docs at `/docs` | Verified (test) |
 | Customer-ready demo | console + printable shift report | Done |
+| Scale beyond the brief | `warehouse_xl.yaml`: 40 robots, ~4,150 orders per 8 h shift, 0 collisions | Verified (2 shifts per scenario) |
 | 3-5 minute demo video | to record (suggested script in STEPS.md) | **To do (you)** |
-| Technical report (4-6 pages) | material in STEPS.md + results/ | **To do** |
+| Technical report | `docs/TusCore_Technical_Report.pdf` (also a shareable online doc) | Done |
 
 ## TusCore interface
 | Requirement | Status |

@@ -3,3 +3,6 @@ __pycache__/
 .venv/
 node_modules/
 .pytest_cache/
+
+# designer data (saved layouts, compiled maps)
+data/

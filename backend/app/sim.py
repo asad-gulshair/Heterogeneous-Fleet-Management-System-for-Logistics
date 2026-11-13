@@ -137,9 +137,29 @@ class Simulation:
         for c, t in zip(bays, order):
             self.bay_owner[c] = t
 
+    def _parking_spots(self) -> list:
+        """Free cells of the charging zones; if robots outnumber them, the nearest free cells around."""
+        g, need = self.grid, sum(t["count"] for t in self.cfg["robot_types"].values())
+        spots = []
+        for n in g.zones_of("charging"):
+            z = g.zones[n]
+            spots += [(x, y) for y in range(z["y"], z["y"] + z["h"]) for x in range(z["x"], z["x"] + z["w"])
+                      if (x, y) in g.reach]
+        if len(spots) < need:                    # grow outwards from the zones (or from any free cell)
+            seen, q = set(spots), deque(spots or sorted(g.reach)[:1])
+            seen.update(q)
+            extra = [] if spots else list(q)
+            while q and len(spots) + len(extra) < need:
+                cx, cy = q.popleft()
+                for dx, dy in NEIGH:
+                    c = (cx + dx, cy + dy)
+                    if c not in seen and c in g.reach:
+                        seen.add(c); q.append(c); extra.append(c)
+            spots += sorted(extra, key=lambda c: (c[1], c[0]))
+        return spots
+
     def _spawn_robots(self):
-        z = self.cfg["zones"]["charging_area"]   # robots start parked in the charging area
-        spots = [(x, y) for y in range(z["y"], z["y"] + z["h"]) for x in range(z["x"], z["x"] + z["w"])]
+        spots = self._parking_spots()            # robots start parked in the charging area(s)
         self.rng.shuffle(spots)
         self.type_count = {}
         for tname, t in self.cfg["robot_types"].items():
@@ -700,7 +720,7 @@ class Simulation:
             self.grid.closed -= cells
             self.closed_rows.discard(row)
         self.events.add(self.sim_time, "warn" if closed else "ok", "control",
-                        f"Aisle A{row + 1} {'CLOSED for maintenance - traffic rerouted, orders there wait' if closed else 're-opened'}")
+                        f"Aisle {self.grid.rack_name(row)} {'CLOSED for maintenance - traffic rerouted, orders there wait' if closed else 're-opened'}")
         self._replan_all()
         return True
 
@@ -742,7 +762,7 @@ class Simulation:
         if self.paused:
             out.insert(0, {"level": "error", "title": "Fleet paused", "detail": "all robots holding position", "robot": None})
         for row in sorted(self.closed_rows):
-            out.append({"level": "warn", "title": f"Aisle A{row + 1} closed", "detail": "maintenance - traffic rerouted", "robot": None})
+            out.append({"level": "warn", "title": f"Aisle {self.grid.rack_name(row)} closed", "detail": "maintenance - traffic rerouted", "robot": None})
         late = [t for t in self.tasks.values() if self.sim_time - t.created > self.sla_s]
         if late:
             out.append({"level": "warn", "title": f"{len(late)} order(s) past SLA", "detail": f"older than {self.sla_s // 60} min", "robot": None})

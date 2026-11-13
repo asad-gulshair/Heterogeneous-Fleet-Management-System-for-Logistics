@@ -18,7 +18,7 @@ export const api = {
     return r.json();
   },
 };
-const PAGES = ['ops', 'overview', 'analytics', 'compare', 'whatif', 'integration'];
+const PAGES = ['layout', 'ops', 'overview', 'analytics', 'compare', 'whatif', 'integration'];
 export const S = { MAP: null, SNAP: null, sel: null, tab: 'robots', view: '3d', twin: null, plan: null, page: 'ops', listeners: [] };
 export const fmtT = t => { t = Math.floor(t); return [t / 3600, t % 3600 / 60, t % 60].map(v => String(Math.floor(v)).padStart(2, '0')).join(':'); };
 export const fmtDur = x => { x = Math.round(x || 0); return x < 60 ? x + 's' : x < 3600 ? Math.floor(x / 60) + 'm ' + String(x % 60).padStart(2, '0') + 's' : (x / 3600).toFixed(1) + 'h'; };
@@ -41,6 +41,7 @@ async function init() {
   bindHeader(); bindPanel();
   initPages();
   window.addEventListener('hashchange', route); route();
+  window.addEventListener('tuscore:layout', async () => { S.sel = null; await loadMap(); });   // designer started a shift on a new layout
 }
 
 async function loadMap() {

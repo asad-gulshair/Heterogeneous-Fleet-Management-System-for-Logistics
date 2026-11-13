@@ -98,7 +98,13 @@ export class Twin3D {
   }
 
   _buildZones() {
-    const names = { pallet_area: 'PALLET AREA', packing_1: 'PACKING 1', packing_2: 'PACKING 2', loading_dock: 'LOADING DOCK', charging_area: 'CHARGING' };
+    const TN = { pallet_area: 'PALLET AREA', packing: 'PACKING', dock: 'LOADING DOCK', charging: 'CHARGING' }, cnt = {}, tot = {};
+    for (const z of Object.values(this.map.zones)) tot[z.type] = (tot[z.type] || 0) + 1;
+    const names = {};
+    for (const [k, z] of Object.entries(this.map.zones).sort((a, b) => a[1].y - b[1].y || a[1].x - b[1].x)) {
+      cnt[z.type] = (cnt[z.type] || 0) + 1;
+      names[k] = (TN[z.type] || k.toUpperCase()) + (z.type === 'packing' || tot[z.type] > 1 ? ' ' + cnt[z.type] : '');
+    }
     for (const [k, z] of Object.entries(this.map.zones)) {
       const p = new THREE.Mesh(new THREE.PlaneGeometry(z.w, z.h), new THREE.MeshStandardMaterial({ color: z.color, transparent: true, opacity: 0.2, roughness: 0.9 }));
       p.rotation.x = -Math.PI / 2; p.position.set(z.x + z.w / 2, 0.01, z.y + z.h / 2); p.receiveShadow = true; this.scene.add(p);
@@ -114,17 +120,22 @@ export class Twin3D {
     const shelves = [...this.map.shelves].sort((a, b) => a.y - b.y), rand = rng(7);
     const ups = [], beams = [], decks = [], boxes = [];
     shelves.forEach((s, i) => {
-      for (let x = s.x; x <= s.x + s.w; x += 2) for (const z of [s.y + 0.05, s.y + s.h - 0.05]) ups.push([x, RACK_H / 2, z]);
+      const hz = (s.orient || (s.w >= s.h ? 'h' : 'v')) === 'h';
+      if (hz) for (let x = s.x; x <= s.x + s.w; x += 2) for (const z of [s.y + 0.05, s.y + s.h - 0.05]) ups.push([x, RACK_H / 2, z]);
+      else for (let z = s.y; z <= s.y + s.h; z += 2) for (const x of [s.x + 0.05, s.x + s.w - 0.05]) ups.push([x, RACK_H / 2, z]);
       for (const lv of LEVELS) {
         decks.push([s.x + s.w / 2, lv, s.y + s.h / 2, s.w, s.h - 0.1]);
-        for (const z of [s.y + 0.05, s.y + s.h - 0.05]) beams.push([s.x + s.w / 2, lv + 0.06, z, s.w]);
+        if (hz) for (const z of [s.y + 0.05, s.y + s.h - 0.05]) beams.push([s.x + s.w / 2, lv + 0.06, z, s.w, 0]);
+        else for (const x of [s.x + 0.05, s.x + s.w - 0.05]) beams.push([x, lv + 0.06, s.y + s.h / 2, s.h, 1]);
         for (let x = s.x; x < s.x + s.w; x++) for (let z = s.y; z < s.y + s.h; z++) if (rand() < 0.74) {
           const w = 0.55 + rand() * 0.3, h = 0.32 + rand() * (lv > 2.5 ? 0.45 : 0.55), d = 0.55 + rand() * 0.3;
           const r = rand(), col = r < 0.12 ? '#2f6fd6' : r < 0.2 ? '#d6dce6' : ['#b98c5a', '#a87b4b', '#c89b67', '#9c7246'][Math.floor(rand() * 4)];
           boxes.push([x + 0.5, lv + 0.03 + h / 2, z + 0.5, w, h, d, col, `${x}|${z}|${LEVELS.indexOf(lv)}`]);
         }
       }
-      const lab = floorLabel('A' + (i + 1), 1.4, '#7fa2e0'); lab.position.set(s.x - 1.3, 0.03, s.y + s.h / 2); this.scene.add(lab);
+      const lab = floorLabel(s.name || 'A' + (i + 1), 1.4, '#7fa2e0');
+      if (hz) lab.position.set(s.x - 1.3, 0.03, s.y + s.h / 2); else lab.position.set(s.x + s.w / 2, 0.03, s.y - 0.9);
+      this.scene.add(lab);
     });
     const inst = (geo, mat, list, place, shadow = true) => {
       const m = new THREE.InstancedMesh(geo, mat, list.length), o = new THREE.Object3D(), c = new THREE.Color();
@@ -132,7 +143,7 @@ export class Twin3D {
       m.castShadow = shadow; m.receiveShadow = true; this.scene.add(m); return m;
     };
     inst(new THREE.BoxGeometry(0.09, RACK_H, 0.09), std('#4b6cc0', { metalness: 0.5 }), ups, (o, p) => { o.position.set(...p); o.scale.set(1, 1, 1); });
-    inst(new THREE.BoxGeometry(1, 0.11, 0.06), std('#e8742a', { metalness: 0.4 }), beams, (o, p) => { o.position.set(p[0], p[1], p[2]); o.scale.set(p[3], 1, 1); });
+    inst(new THREE.BoxGeometry(1, 0.11, 0.06), std('#e8742a', { metalness: 0.4 }), beams, (o, p) => { o.position.set(p[0], p[1], p[2]); o.scale.set(p[3], 1, 1); o.rotation.y = p[4] ? Math.PI / 2 : 0; });
     inst(new THREE.BoxGeometry(1, 0.03, 1), std('#6b7c9c', { metalness: 0.5 }), decks, (o, p) => { o.position.set(p[0], p[1], p[2]); o.scale.set(p[3], 1, p[4]); });
     this.boxMesh = inst(new THREE.BoxGeometry(1, 1, 1), std('#ffffff', { roughness: 0.85, metalness: 0 }), boxes,
       (o, p) => { o.position.set(p[0], p[1], p[2]); o.scale.set(p[3], p[4], p[5]); o.rotation.y = 0; }, false);
@@ -143,8 +154,8 @@ export class Twin3D {
   _buildPalletDecor() {
     // Pallets that are WAITING to be moved are drawn dynamically from the live order list (see _syncPallets).
     // Here only a static row of stored stock along the back edge of the pallet area.
-    const z = this.map.zones.pallet_area; if (!z) return;
     const rand = rng(11);
+    for (const z of Object.values(this.map.zones).filter(z => z.type === 'pallet_area'))
     for (let x = z.x + 0.5; x < z.x + z.w - 0.5; x += 1.6) {
       this.scene.add(box(0.95, 0.14, 0.95, std('#9b6b3c', { metalness: 0, roughness: 0.9 }), x + 0.3, 0.07, z.y + 0.6));
       const h = 0.6 + rand() * 1.1;
@@ -189,13 +200,32 @@ export class Twin3D {
 
   _buildWalls() {
     const { W, H } = this, wall = std('#0e1f48', { roughness: 0.9, metalness: 0.1 }), strip = glow('#2E9FE8', 1.2);
+    // walls drawn in the layout designer (block every robot, the drone too)
+    const iw = std('#41557f', { roughness: 0.85, metalness: 0.1 });
+    for (const w of this.map.walls || []) {
+      const m = box(w.w, 3, w.h, iw, w.x + w.w / 2, 1.5, w.y + w.h / 2); this.scene.add(m);
+      this.scene.add(box(w.w, 0.06, w.h, glow('#6cc4ff', 0.5), w.x + w.w / 2, 3.03, w.y + w.h / 2, false));
+    }
+    // no-go zones: red hatched floor, low barrier posts at the corners, label
+    for (const n of this.map.nogo || []) {
+      const c = document.createElement('canvas'), px = 32; c.width = Math.max(32, n.w * px); c.height = Math.max(32, n.h * px);
+      const g = c.getContext('2d'); g.fillStyle = 'rgba(229,72,77,.22)'; g.fillRect(0, 0, c.width, c.height);
+      g.strokeStyle = 'rgba(229,72,77,.55)'; g.lineWidth = 6;
+      for (let i = -c.height; i < c.width; i += 28) { g.beginPath(); g.moveTo(i, c.height); g.lineTo(i + c.height, 0); g.stroke(); }
+      g.strokeStyle = '#e5484d'; g.lineWidth = 8; g.strokeRect(4, 4, c.width - 8, c.height - 8);
+      const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+      const p = new THREE.Mesh(new THREE.PlaneGeometry(n.w, n.h), new THREE.MeshBasicMaterial({ map: tex, transparent: true }));
+      p.rotation.x = -Math.PI / 2; p.position.set(n.x + n.w / 2, 0.025, n.y + n.h / 2); this.scene.add(p);
+      for (const [x, z] of [[n.x, n.y], [n.x + n.w, n.y], [n.x, n.y + n.h], [n.x + n.w, n.y + n.h]]) this.scene.add(box(0.12, 1.0, 0.12, std('#e5484d'), x, 0.5, z));
+      if (n.w >= 2 && n.h >= 2) { const lab = floorLabel(n.name || 'NO-GO', Math.min(n.w - 0.4, 4), '#ffd5da'); lab.position.set(n.x + n.w / 2, 0.04, n.y + n.h / 2); this.scene.add(lab); }
+    }
     this.scene.add(box(W, 6, 0.3, wall, this.cx, 3, -0.15));          // north wall
     this.scene.add(box(0.3, 6, H, wall, -0.15, 3, this.cz));            // west wall
     this.scene.add(box(W, 0.08, 0.05, strip, this.cx, 5.7, 0.03, false));
     this.scene.add(box(0.05, 0.08, H, strip, 0.03, 5.7, this.cz, false));
     for (const [x, z, w, d] of [[this.cx, H, W, 0.15], [W, this.cz, 0.15, H]]) this.scene.add(box(w, 0.35, d, std('#f5c542', { roughness: 0.6 }), x, 0.175, z));
     // dock doors on the wall nearest to the loading dock
-    const dz = this.map.zones.loading_dock;
+    const dz = Object.values(this.map.zones).filter(z => z.type === 'dock').sort((a, b) => (b.x + b.w) - (a.x + a.w))[0];
     if (dz) {
       const east = dz.x + dz.w >= W - 3;
       if (east) {
@@ -384,17 +414,28 @@ export class Twin3D {
   _fly(mesh, from, to, dur, { arc = 0.6, delay = 0, then = null } = {}) {
     mesh.position.copy(from); this.flyers.push({ mesh, from: from.clone(), to, dur, arc, t: -delay, then });
   }
-  _shelfRowAt(cellY) { return (this.shelvesSorted || []).find(s => s.y + s.h === Math.round(cellY)); }
-  _takeBox(x, s, levels) {
+  _rackAt(cx, cy) {         // rack + face the robot standing on cell (cx, cy) picks from
+    cx = Math.round(cx); cy = Math.round(cy);
+    for (const s of this.shelvesSorted || []) {
+      if ((s.orient || (s.w >= s.h ? 'h' : 'v')) === 'h') {
+        if (cx >= s.x && cx < s.x + s.w) { if (cy === s.y + s.h) return { s, face: 'S', at: cx }; if (cy === s.y - 1) return { s, face: 'N', at: cx }; }
+      } else if (cy >= s.y && cy < s.y + s.h) { if (cx === s.x + s.w) return { s, face: 'E', at: cy }; if (cx === s.x - 1) return { s, face: 'W', at: cy }; }
+    }
+    return null;
+  }
+  _takeBox(rk, levels) {
     // take the real carton out of the rack slot (front row first); it is restocked a while later
-    for (const li of levels) for (const z of [s.y + s.h - 1, s.y]) {
+    const { s, face, at } = rk;
+    const cells = face === 'S' ? [[at, s.y + s.h - 1], [at, s.y]] : face === 'N' ? [[at, s.y], [at, s.y + s.h - 1]]
+      : face === 'E' ? [[s.x + s.w - 1, at], [s.x, at]] : [[s.x, at], [s.x + s.w - 1, at]];
+    for (const li of levels) for (const [x, z] of cells) {
       const sl = this.slots.get(`${x}|${z}|${li}`);
       if (sl && !sl.taken) {
         sl.taken = true; const o = new THREE.Matrix4().makeScale(0, 0, 0); this.boxMesh.setMatrixAt(sl.i, o); this.boxMesh.instanceMatrix.needsUpdate = true;
         this.restock.push({ sl, at: performance.now() + 90000 }); return { pos: sl.pos.clone(), col: sl.col, size: [sl.size[0] * 0.7, Math.min(sl.size[1], 0.5), sl.size[2] * 0.6] };
       }
     }
-    return { pos: new THREE.Vector3(x + 0.5, LEVELS[levels[0]] + 0.3, s.y + s.h - 0.5), col: '#b98c5a', size: [0.42, 0.26, 0.34] };
+    return { pos: new THREE.Vector3(cells[0][0] + 0.5, LEVELS[levels[0]] + 0.3, cells[0][1] + 0.5), col: '#b98c5a', size: [0.42, 0.26, 0.34] };
   }
   _binPos(rec) { return new THREE.Vector3(rec.pos.x, (rec.p.binTop || 0.62) * VIS, rec.pos.z); }
   _platPos(rec) { return new THREE.Vector3(rec.pos.x, (rec.p.lift + 0.25) * VIS, rec.pos.z); }
@@ -414,13 +455,14 @@ export class Twin3D {
   }
   // tray height y (top surface), arms extended by ext metres in z-direction dir; finger closed 0..1
   _poseHandler(rec, y, ext, dir, grip = 0) {
-    const h = rec.p.hd, x = rec.pos.x, z = rec.pos.z;
-    h.g.visible = true;
-    for (const m of h.posts) { const top = Math.max(y + 0.12, 0.9); m.scale.y = top - 0.3; m.position.set(x + m.userData.x, 0.3 + (top - 0.3) / 2, z); }
-    h.tray.position.set(x, y - 0.018, z);
+    // local frame: arms reach along local z; turned 90 deg when the rack face is east / west of the robot
+    const h = rec.p.hd;
+    h.g.visible = true; h.g.position.set(rec.pos.x, 0, rec.pos.z); h.g.rotation.y = rec.p.hdAxis === 'x' ? Math.PI / 2 : 0;
+    for (const m of h.posts) { const top = Math.max(y + 0.12, 0.9); m.scale.y = top - 0.3; m.position.set(m.userData.x, 0.3 + (top - 0.3) / 2, 0); }
+    h.tray.position.set(0, y - 0.018, 0);
     const len = 0.5 + ext;
-    h.arms.forEach(a => { a.scale.z = len; a.position.set(x + a.userData.x, y + 0.1, z + dir * (len / 2 - 0.25)); });   // from behind the mast to the finger tips
-    h.fingers.forEach(f => { f.position.set(x + f.userData.x * (1 - 0.18 * grip), y + 0.1, z + dir * (ext + 0.22)); });
+    h.arms.forEach(a => { a.scale.z = len; a.position.set(a.userData.x, y + 0.1, dir * (len / 2 - 0.25)); });   // from behind the mast to the finger tips
+    h.fingers.forEach(f => { f.position.set(f.userData.x * (1 - 0.18 * grip), y + 0.1, dir * (ext + 0.22)); });
   }
   _seq(dur, step, then) { this.seqs.push({ t: 0, dur, step, then }); }
   _cargoLoad(rec, cargo) {     // show the very same carton (colour + size) in the robot's bin / on its platform
@@ -453,7 +495,9 @@ export class Twin3D {
       return;
     }
     p.hold = true;
-    const base = rec.pos.clone(), dir = Math.sign(b.pos.z - base.z) || 1, L = Math.max(0.05, Math.abs(b.pos.z - base.z) - 0.05);
+    const base = rec.pos.clone(), ax = Math.abs(b.pos.x - base.x) > Math.abs(b.pos.z - base.z) ? 'x' : 'z';
+    p.hdAxis = ax;
+    const dir = Math.sign(b.pos[ax] - base[ax]) || 1, L = Math.max(0.05, Math.abs(b.pos[ax] - base[ax]) - 0.05);
     const rest = 0.62 * VIS, yS = b.pos.y - s1 / 2, inBin = (0.35 * VIS) + s1 / 2;
     const ph = (k, a, z) => Math.min(1, Math.max(0, (k - a) / (z - a))), ez = u => u * u * (3 - 2 * u);
     this._seq(this._bandDur('pick', 1.6, 3.0), k => {
@@ -466,7 +510,8 @@ export class Twin3D {
       this._poseHandler(rec, y, ext, dir, grip);
       if (k >= 0.5) {
         const cy = k < 0.92 ? y + s1 / 2 : rest + s1 / 2 + (inBin - rest - s1 / 2) * ez(ph(k, 0.92, 1));
-        m.position.set(rec.pos.x, cy, rec.pos.z + dir * (k < 0.72 ? ext : 0));
+        const off = dir * (k < 0.72 ? ext : 0);
+        m.position.set(rec.pos.x + (ax === 'x' ? off : 0), cy, rec.pos.z + (ax === 'z' ? off : 0));
       }
     }, () => { p.hd.g.visible = false; p.hold = false; this.scene.remove(m); this._cargoLoad(rec, cargo); p.pending = false; });
   }
@@ -488,7 +533,7 @@ export class Twin3D {
   }
   _transferToBelt(rec, m, t, bx, s1, onBelt) {
     const p = rec.p, belt = 0.95;
-    p.hold = true;
+    p.hold = true; p.hdAxis = 'z';
     const base = rec.pos.clone(), dir = Math.sign(t.bz - base.z) || -1, L = Math.abs(t.bz - base.z), rest = 0.62 * VIS;
     const ph = (k, a, z) => Math.min(1, Math.max(0, (k - a) / (z - a))), ez = u => u * u * (3 - 2 * u);
     let released = false;
@@ -514,11 +559,11 @@ export class Twin3D {
   _transitions(rec, prev, r) {
     const startWork = r.state === 'working' && (prev.state !== 'working' || prev.action !== r.action);
     if (startWork && r.action === 'pick box') {                       // tote AMR: mast up, arms into the rack, carton pulled onto the tray, into the bin
-      const s = this._shelfRowAt(r.y); if (!s) return;
-      this._pickTote(rec, this._takeBox(Math.round(r.x), s, Math.random() < 0.5 ? [0, 1] : [1, 0]));
+      const rk = this._rackAt(r.x, r.y); if (!rk) return;
+      this._pickTote(rec, this._takeBox(rk, Math.random() < 0.5 ? [0, 1] : [1, 0]));
     } else if (startWork && r.action === 'pick high shelf') {         // scissor lift: platform rises, carton slides straight out of the TOP level
-      const s = this._shelfRowAt(r.y); if (!s) return;
-      const d = this._dur('high_pick'), b = this._takeBox(Math.round(r.x), s, [3, 2]);
+      const rk = this._rackAt(r.x, r.y); if (!rk) return;
+      const d = this._dur('high_pick'), b = this._takeBox(rk, [3, 2]);
       const m = this._carton(b.col, b.size); m.position.copy(b.pos); rec.p.pending = true;
       const cargo = { col: b.col, size: b.size }, wait = Math.max(0.6, d * 0.5);
       this._seq(wait, () => {}, () => this._slide(m, [b.pos, () => new THREE.Vector3(rec.pos.x, Math.max(b.pos.y, this._platPos(rec).y + b.size[1] / 2), rec.pos.z), () => this._platPos(rec).setY(this._platPos(rec).y - 0.25 * VIS + 0.03 + b.size[1] / 2 + 0.05)],

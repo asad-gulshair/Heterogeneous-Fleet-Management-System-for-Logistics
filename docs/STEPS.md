@@ -94,3 +94,27 @@ Honest finding: with real traffic, the allocator (greedy vs Hungarian) changes a
   The carton rides into the PACK & SHIP tunnel and leaves the twin there.
 - Scissor lift: carton slides straight out of the top level onto the raised platform; hand-over slides it across into the tote AMR's bin.
 - Visual only: the simulation, its KPIs and all results are unchanged.
+
+## Task 2 - Step 1, part 1: Layout Designer (engine + editor)
+Plan and research: `docs/TASK2_PLAN.md`.
+- **Layout file** (`tuscore.layout/1`): vendor-neutral JSON in metres - racks, walls, no-go zones, packing stations,
+  docks, pallet areas, charging areas, robot counts, order rates.
+- **Compiler** (`backend/app/layout.py`): turns a layout into the 1 m simulation map, in the same config format as the
+  Task 1 YAML files, so allocation, traffic, comparison and what-if work on drawn layouts unchanged.
+- **Problem checker**: unreachable stations, racks that cannot be picked, aisles too narrow for the tote AMR or the
+  TL-65 (robot width + 0.15 m each side), stacker paths too narrow, overlaps, missing charging area, orders without a robot,
+  too few chargers. Errors block a run; clicking a problem highlights the element.
+- **Simulation generalised**: walls and no-go zones (block the drone too), vertical racks picked from east / west,
+  any number of packing stations, docks and pallet areas, racks against a wall picked from the open side, robots spawn
+  safely when they outnumber the charging area. Task 1 results are unchanged (checked on all three Task 1 sites).
+- **Design store** with versions (`data/designs/<id>/v001.json` ...), examples in `config/layouts/` (Demo warehouse,
+  Regional DC, L-shaped cross-dock with walls, door gap, vertical racks, a 1 m narrow-aisle block, two docks, an office).
+- **API**: `/api/catalog`, `/api/designs` (list, get, versions, save), `/api/designs/check`, `/api/designs/{id}/apply`.
+- **Layout page**: palette, drag to draw, move, resize, rotate (R), duplicate (Ctrl+D), delete, undo / redo, zoom / pan,
+  everything snaps to 1 m and stays on the floor, properties in metres, robot counts and order rates, live problems,
+  save (Ctrl+S) with version history, unsaved-changes guard and draft recovery, **Run shift** opens the live twin.
+- **Twin**: 2D and 3D draw walls, no-go zones, vertical racks (picking arm works on both axes), several docks and pallet areas.
+- Tests: 23 (10 new): every example runs with 0 collisions / 0 deadlocks, the redrawn Task 1 site gives the Task 1
+  result exactly, every check rule, the API save / version / apply flow.
+
+Next (part 2): floor plan image / PDF as background with two-point scale, custom robot types, user-guide page.

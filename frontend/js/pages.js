@@ -1,4 +1,5 @@
 // Analytics, Scenario comparison, What-if / ROI and Integration pages.
+import { showDesigner } from './designer.js';
 import { $, api, S, fmtT, KC, glyph } from './app.js';
 
 const C = { text: '#93a8cc', grid: 'rgba(120,160,255,.10)' };
@@ -41,6 +42,7 @@ export function initPages() {
 
 export function showPage(p) {
   clearInterval(timer); timer = null;
+  if (p === 'layout') showDesigner();
   if (p === 'analytics') { refreshAnalytics(); timer = setInterval(refreshAnalytics, 4000); }
   if (p === 'compare' && !inited.compare) { inited.compare = true; loadLatest('comparison', renderCompare); }
   if (p === 'whatif' && !inited.whatif) { inited.whatif = true; buildWhatIf(); loadLatest('whatif', renderWhatIf); }

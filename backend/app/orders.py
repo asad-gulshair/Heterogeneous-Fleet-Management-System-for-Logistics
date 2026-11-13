@@ -13,22 +13,45 @@ class OrderFactory:
         self.grid, self.rng = grid, rng
         self.dwell = cfg["orders"]["dwell_s"]
         self.p_mismatch = cfg["orders"].get("scan_mismatch_prob", 0.0)
-        self.rows = sorted(grid.shelves, key=lambda s: s["y"])   # shelf rows A1..An
+        self.rows = grid.rows                                    # racks A1..An (sorted top to bottom)
+        self.packing = grid.zones_of("packing")
+        self.pallets = grid.zones_of("pallet_area")
+        self.docks = grid.zones_of("dock")
         self._next_id = 1
 
     # --- helpers -----------------------------------------------------
     def _zone_cell(self, name: str) -> tuple:
-        z = self.grid.zones[name]
-        return (self.rng.randrange(z["x"], z["x"] + z["w"]), self.rng.randrange(z["y"], z["y"] + z["h"]))
+        return self.grid.free_cell_in(name, self.rng)
 
-    def _shelf_face(self, row: int | None, bay: int | None):
-        """Aisle cells in front of a shelf bay: the picker stands on `a`, a second robot can stand on `b`."""
-        row = self.rng.randrange(len(self.rows)) if row is None else max(0, min(row, len(self.rows) - 1))
-        s = self.rows[row]
-        bay = self.rng.randrange(s["w"]) if bay is None else max(0, min(bay, s["w"] - 1))
-        x = s["x"] + bay
-        a = (x, s["y"] + s["h"])
-        b = (x, s["y"] + s["h"] + 1)
+    def _pick(self, names: list[str]) -> str:
+        # one candidate: no random draw (keeps seeded runs of hand-written layouts identical)
+        return names[0] if len(names) == 1 else self.rng.choice(names)
+
+    def _pickable_rows(self) -> list[int]:
+        return [i for i, f in enumerate(self.grid.faces) if f]
+
+    def _shelf_face(self, row: int | None, bay: int | None, lift: bool = False):
+        """Aisle cells in front of a rack bay: the picker stands on `a`, a second robot can stand on `b`.
+        Only bays with a reachable face are used (racks against a wall are picked from the open side)."""
+        rows = self._pickable_rows()
+        if lift:                                  # TL-65 needs a wide enough aisle (set by the layout compiler)
+            wide = [i for i in rows if self.rows[i].get("lift_bays", True) != []]
+            if row is None and len(wide) < len(rows):
+                row = self.rng.choice(wide) if wide else None
+            if row is not None and self.rows[row].get("lift_bays") and bay is None:
+                bay, face = self.rng.choice(self.rows[row]["lift_bays"])
+                a, b = self.grid.face(row, bay, face)
+                return row, bay, a, b
+        if row is None:
+            row = self.rng.randrange(len(self.rows)) if len(rows) == len(self.rows) else self.rng.choice(rows)
+        else:
+            row = max(0, min(row, len(self.rows) - 1))
+        s, faces = self.rows[row], self.grid.faces[row]
+        n = self.grid.rack_len(s)
+        if bay is None:
+            bay = self.rng.randrange(n) if len(faces) == n else self.rng.choice(faces)[0]
+        bay = max(0, min(bay, n - 1))
+        a, b = self.grid.face(row, bay)
         return row, bay, a, b
 
     def new_id(self) -> int:
@@ -45,13 +68,13 @@ class OrderFactory:
         self._next_id += 1
         if kind == "box_pick":
             row, bay, a, _ = self._shelf_face(row, bay)
-            pack = self._zone_cell(self.rng.choice(["packing_1", "packing_2"]))
+            pack = self._zone_cell(self._pick(self.packing))
             plans = {"carry_tote": [Action(a, d["pick"], "pick box"), Action(pack, d["drop"], "drop at packing")]}
-            title = f"Box A{row + 1}-{bay + 1:02d}"
+            title = f"Box {self.grid.rack_name(row)}-{bay + 1:02d}"
         elif kind == "high_pick":
-            row, bay, a, b = self._shelf_face(row, bay)
-            pack = self._zone_cell(self.rng.choice(["packing_1", "packing_2"]))
-            title = f"High pick A{row + 1}-{bay + 1:02d}"
+            row, bay, a, b = self._shelf_face(row, bay, lift=True)
+            pack = self._zone_cell(self._pick(self.packing))
+            title = f"High pick {self.grid.rack_name(row)}-{bay + 1:02d}"
             if coordinated:
                 plans = {  # scissor lift picks high, tote AMR meets it for the hand-over, then delivers
                     "high_pick": [Action(a, d["high_pick"], "pick high shelf"), Action(a, d["handoff"], "hand over", sync="handoff")],
@@ -61,15 +84,14 @@ class OrderFactory:
                 plans = {"high_pick": [Action(a, d["high_pick"], "pick high shelf"), Action(a, d["handoff"], "place at transfer point")]}
                 then = ("carry_tote", [Action(b, d["handoff"], "collect tote"), Action(pack, d["drop"], "drop at packing")])
         elif kind == "pallet_move":
-            src, dst = self._zone_cell("pallet_area"), self._zone_cell("loading_dock")
+            src, dst = self._zone_cell(self._pick(self.pallets)), self._zone_cell(self._pick(self.docks))
             plans = {"move_pallet": [Action(src, d["pallet_pick"], "lift pallet"), Action(dst, d["pallet_drop"], "set down at dock")]}
             title = "Pallet to dock"
         elif kind == "inventory_scan":
             row = self.rng.randrange(len(self.rows)) if row is None else max(0, min(row, len(self.rows) - 1))
-            s = self.rows[row]
-            plans = {"scan": [Action((s["x"], s["y"]), d["scan"], "start scan"),
-                              Action((s["x"] + s["w"] - 1, s["y"]), d["scan"], "finish scan")]}
-            title = f"Scan row A{row + 1}"
+            p0, p1 = self.grid.scan_line(row)
+            plans = {"scan": [Action(p0, d["scan"], "start scan"), Action(p1, d["scan"], "finish scan")]}
+            title = f"Scan row {self.grid.rack_name(row)}"
         else:
             raise ValueError(f"unknown order kind: {kind}")
         t = Task(id=tid, kind=kind, title=title, created=now, plans=plans)

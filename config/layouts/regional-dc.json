@@ -1,0 +1,135 @@
+{
+ "name": "Regional DC (19 robots)",
+ "width_m": 80,
+ "height_m": 50,
+ "elements": [
+  {
+   "id": "r1",
+   "type": "rack",
+   "x": 8,
+   "y": 5,
+   "w": 40,
+   "h": 2,
+   "levels": 4
+  },
+  {
+   "id": "r2",
+   "type": "rack",
+   "x": 8,
+   "y": 9,
+   "w": 40,
+   "h": 2,
+   "levels": 4
+  },
+  {
+   "id": "r3",
+   "type": "rack",
+   "x": 8,
+   "y": 13,
+   "w": 40,
+   "h": 2,
+   "levels": 4
+  },
+  {
+   "id": "r4",
+   "type": "rack",
+   "x": 8,
+   "y": 17,
+   "w": 40,
+   "h": 2,
+   "levels": 4
+  },
+  {
+   "id": "r5",
+   "type": "rack",
+   "x": 8,
+   "y": 21,
+   "w": 40,
+   "h": 2,
+   "levels": 4
+  },
+  {
+   "id": "r6",
+   "type": "rack",
+   "x": 8,
+   "y": 25,
+   "w": 40,
+   "h": 2,
+   "levels": 4
+  },
+  {
+   "id": "r7",
+   "type": "rack",
+   "x": 8,
+   "y": 29,
+   "w": 40,
+   "h": 2,
+   "levels": 4
+  },
+  {
+   "id": "r8",
+   "type": "rack",
+   "x": 8,
+   "y": 33,
+   "w": 40,
+   "h": 2,
+   "levels": 4
+  },
+  {
+   "id": "z_pallet_area",
+   "type": "pallet_area",
+   "x": 54,
+   "y": 4,
+   "w": 18,
+   "h": 16
+  },
+  {
+   "id": "z_packing_1",
+   "type": "packing",
+   "x": 4,
+   "y": 41,
+   "w": 8,
+   "h": 5
+  },
+  {
+   "id": "z_packing_2",
+   "type": "packing",
+   "x": 16,
+   "y": 41,
+   "w": 8,
+   "h": 5
+  },
+  {
+   "id": "z_loading_dock",
+   "type": "dock",
+   "x": 66,
+   "y": 32,
+   "w": 12,
+   "h": 15
+  },
+  {
+   "id": "z_charging_area",
+   "type": "charging",
+   "x": 38,
+   "y": 42,
+   "w": 18,
+   "h": 6
+  }
+ ],
+ "robots": {
+  "tote_amr": 10,
+  "scissor_lift": 4,
+  "pallet_stacker": 3,
+  "drone": 2
+ },
+ "orders": {
+  "box_pick": 190.0,
+  "high_pick": 48.0,
+  "pallet_move": 28.0,
+  "inventory_scan": 8.0
+ },
+ "schema": "tuscore.layout/1",
+ "grid_m": 1,
+ "background": null,
+ "description": "Larger Task 1 site, 80 x 50 m."
+}

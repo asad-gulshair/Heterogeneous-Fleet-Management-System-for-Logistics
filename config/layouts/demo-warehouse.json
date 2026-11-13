@@ -1,0 +1,117 @@
+{
+ "name": "Demo warehouse (12 robots)",
+ "width_m": 60,
+ "height_m": 40,
+ "elements": [
+  {
+   "id": "r1",
+   "type": "rack",
+   "x": 6,
+   "y": 5,
+   "w": 30,
+   "h": 2,
+   "levels": 4
+  },
+  {
+   "id": "r2",
+   "type": "rack",
+   "x": 6,
+   "y": 9,
+   "w": 30,
+   "h": 2,
+   "levels": 4
+  },
+  {
+   "id": "r3",
+   "type": "rack",
+   "x": 6,
+   "y": 13,
+   "w": 30,
+   "h": 2,
+   "levels": 4
+  },
+  {
+   "id": "r4",
+   "type": "rack",
+   "x": 6,
+   "y": 17,
+   "w": 30,
+   "h": 2,
+   "levels": 4
+  },
+  {
+   "id": "r5",
+   "type": "rack",
+   "x": 6,
+   "y": 21,
+   "w": 30,
+   "h": 2,
+   "levels": 4
+  },
+  {
+   "id": "r6",
+   "type": "rack",
+   "x": 6,
+   "y": 25,
+   "w": 30,
+   "h": 2,
+   "levels": 4
+  },
+  {
+   "id": "z_pallet_area",
+   "type": "pallet_area",
+   "x": 42,
+   "y": 4,
+   "w": 14,
+   "h": 12
+  },
+  {
+   "id": "z_packing_1",
+   "type": "packing",
+   "x": 4,
+   "y": 32,
+   "w": 6,
+   "h": 4
+  },
+  {
+   "id": "z_packing_2",
+   "type": "packing",
+   "x": 14,
+   "y": 32,
+   "w": 6,
+   "h": 4
+  },
+  {
+   "id": "z_loading_dock",
+   "type": "dock",
+   "x": 50,
+   "y": 28,
+   "w": 8,
+   "h": 10
+  },
+  {
+   "id": "z_charging_area",
+   "type": "charging",
+   "x": 30,
+   "y": 33,
+   "w": 14,
+   "h": 5
+  }
+ ],
+ "robots": {
+  "tote_amr": 6,
+  "scissor_lift": 3,
+  "pallet_stacker": 2,
+  "drone": 1
+ },
+ "orders": {
+  "box_pick": 170.0,
+  "high_pick": 45.0,
+  "pallet_move": 24.0,
+  "inventory_scan": 6.0
+ },
+ "schema": "tuscore.layout/1",
+ "grid_m": 1,
+ "background": null,
+ "description": "The Task 1 site: 6 rack rows, 2 packing stations, pallet area and dock."
+}

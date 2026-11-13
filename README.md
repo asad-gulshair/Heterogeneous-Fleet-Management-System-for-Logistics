@@ -30,6 +30,9 @@ uvicorn app.main:app --reload --reload-dir app --reload-dir ../config
 ```
 
 ## What the console shows
+- **Layout** - draw a warehouse (racks, walls, no-go zones, packing, docks, pallet areas, charging), set robot counts,
+  see problems live (unreachable stations, aisles too narrow for a robot ...), save versions and run a shift on it.
+  Three example layouts are included. No code or config files to edit.
 - **Overview** - the client view: every vendor's fleet at a glance, how TusCore runs the site live (orders in →
   allocation → reserved routes → vendor protocols → recovery, with live counters), what needs attention now, and the
   proven value from the comparison.

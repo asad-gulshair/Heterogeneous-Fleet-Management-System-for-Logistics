@@ -1,0 +1,249 @@
+{
+ "name": "L-shaped cross-dock (unusual layout)",
+ "width_m": 70,
+ "height_m": 50,
+ "elements": [
+  {
+   "id": "e1",
+   "type": "wall",
+   "x": 0,
+   "y": 0,
+   "w": 46,
+   "h": 1
+  },
+  {
+   "id": "e2",
+   "type": "wall",
+   "x": 45,
+   "y": 0,
+   "w": 1,
+   "h": 20
+  },
+  {
+   "id": "e3",
+   "type": "wall",
+   "x": 45,
+   "y": 19,
+   "w": 25,
+   "h": 1
+  },
+  {
+   "id": "e4",
+   "type": "wall",
+   "x": 69,
+   "y": 19,
+   "w": 1,
+   "h": 31
+  },
+  {
+   "id": "e5",
+   "type": "wall",
+   "x": 0,
+   "y": 49,
+   "w": 70,
+   "h": 1
+  },
+  {
+   "id": "e6",
+   "type": "wall",
+   "x": 0,
+   "y": 0,
+   "w": 1,
+   "h": 50
+  },
+  {
+   "id": "e7",
+   "type": "nogo",
+   "x": 46,
+   "y": 0,
+   "w": 24,
+   "h": 19,
+   "name": "Outside"
+  },
+  {
+   "id": "e8",
+   "type": "rack",
+   "x": 4,
+   "y": 4,
+   "w": 2,
+   "h": 22,
+   "levels": 5
+  },
+  {
+   "id": "e9",
+   "type": "rack",
+   "x": 8,
+   "y": 4,
+   "w": 2,
+   "h": 22,
+   "levels": 5
+  },
+  {
+   "id": "e10",
+   "type": "rack",
+   "x": 12,
+   "y": 4,
+   "w": 2,
+   "h": 22,
+   "levels": 5
+  },
+  {
+   "id": "e11",
+   "type": "rack",
+   "x": 16,
+   "y": 4,
+   "w": 2,
+   "h": 22,
+   "levels": 5
+  },
+  {
+   "id": "e12",
+   "type": "rack",
+   "x": 20,
+   "y": 4,
+   "w": 2,
+   "h": 22,
+   "levels": 5
+  },
+  {
+   "id": "e13",
+   "type": "rack",
+   "x": 24,
+   "y": 4,
+   "w": 2,
+   "h": 22,
+   "levels": 5
+  },
+  {
+   "id": "e14",
+   "type": "rack",
+   "x": 28,
+   "y": 4,
+   "w": 2,
+   "h": 22,
+   "levels": 5
+  },
+  {
+   "id": "e15",
+   "type": "rack",
+   "x": 4,
+   "y": 31,
+   "w": 24,
+   "h": 2,
+   "levels": 4
+  },
+  {
+   "id": "e16",
+   "type": "rack",
+   "x": 4,
+   "y": 34,
+   "w": 24,
+   "h": 2,
+   "levels": 4
+  },
+  {
+   "id": "e17",
+   "type": "rack",
+   "x": 4,
+   "y": 37,
+   "w": 24,
+   "h": 2,
+   "levels": 4
+  },
+  {
+   "id": "e18",
+   "type": "wall",
+   "x": 34,
+   "y": 1,
+   "w": 1,
+   "h": 14
+  },
+  {
+   "id": "e19",
+   "type": "wall",
+   "x": 34,
+   "y": 18,
+   "w": 1,
+   "h": 14
+  },
+  {
+   "id": "e20",
+   "type": "packing",
+   "x": 37,
+   "y": 4,
+   "w": 6,
+   "h": 4
+  },
+  {
+   "id": "e21",
+   "type": "packing",
+   "x": 37,
+   "y": 10,
+   "w": 6,
+   "h": 4
+  },
+  {
+   "id": "e22",
+   "type": "packing",
+   "x": 37,
+   "y": 22,
+   "w": 6,
+   "h": 4
+  },
+  {
+   "id": "e23",
+   "type": "pallet_area",
+   "x": 48,
+   "y": 22,
+   "w": 12,
+   "h": 10
+  },
+  {
+   "id": "e24",
+   "type": "dock",
+   "x": 62,
+   "y": 22,
+   "w": 6,
+   "h": 12
+  },
+  {
+   "id": "e25",
+   "type": "dock",
+   "x": 50,
+   "y": 40,
+   "w": 12,
+   "h": 8
+  },
+  {
+   "id": "e26",
+   "type": "nogo",
+   "x": 38,
+   "y": 36,
+   "w": 6,
+   "h": 6,
+   "name": "Office"
+  },
+  {
+   "id": "e27",
+   "type": "charging",
+   "x": 30,
+   "y": 44,
+   "w": 14,
+   "h": 4,
+   "bays": 8
+  }
+ ],
+ "description": "Not a rectangle: walls with a door gap, vertical racks, a narrow-aisle block (1 m aisles), two docks and an office no-go zone.",
+ "robots": {
+  "tote_amr": 8,
+  "scissor_lift": 3,
+  "pallet_stacker": 3,
+  "drone": 1
+ },
+ "orders": {
+  "box_pick": 190,
+  "high_pick": 40,
+  "pallet_move": 30,
+  "inventory_scan": 6
+ }
+}

@@ -28,7 +28,20 @@ export class Plan2D {
     const bg = g.createLinearGradient(0, 0, 0, H); bg.addColorStop(0, '#0a1a3c'); bg.addColorStop(1, '#08132e'); g.fillStyle = bg; g.fillRect(0, 0, W, H);
     for (let x = 0; x <= M.width; x++) { g.strokeStyle = x % 5 ? 'rgba(120,160,255,.045)' : 'rgba(120,160,255,.11)'; g.beginPath(); g.moveTo(x * c, 0); g.lineTo(x * c, H); g.stroke(); }
     for (let y = 0; y <= M.height; y++) { g.strokeStyle = y % 5 ? 'rgba(120,160,255,.045)' : 'rgba(120,160,255,.11)'; g.beginPath(); g.moveTo(0, y * c); g.lineTo(W, y * c); g.stroke(); }
-    const names = { pallet_area: 'PALLET AREA', packing_1: 'PACKING 1', packing_2: 'PACKING 2', loading_dock: 'LOADING DOCK', charging_area: 'CHARGING' };
+    const TN = { pallet_area: 'PALLET AREA', packing: 'PACKING', dock: 'LOADING DOCK', charging: 'CHARGING' }, cnt = {}, tot = {}, names = {};
+    for (const z of Object.values(M.zones)) tot[z.type] = (tot[z.type] || 0) + 1;
+    for (const [k, z] of Object.entries(M.zones).sort((a, b) => a[1].y - b[1].y || a[1].x - b[1].x)) {
+      cnt[z.type] = (cnt[z.type] || 0) + 1; names[k] = (TN[z.type] || k.toUpperCase()) + (z.type === 'packing' || tot[z.type] > 1 ? ' ' + cnt[z.type] : '');
+    }
+    for (const n of M.nogo || []) {                       // no-go zones: hatched red
+      g.save(); g.beginPath(); g.rect(n.x * c, n.y * c, n.w * c, n.h * c); g.clip();
+      g.fillStyle = 'rgba(229,72,77,.14)'; g.fillRect(n.x * c, n.y * c, n.w * c, n.h * c);
+      g.strokeStyle = 'rgba(229,72,77,.45)'; g.lineWidth = 2;
+      for (let i = -n.h * c; i < n.w * c; i += 10) { g.beginPath(); g.moveTo(n.x * c + i, (n.y + n.h) * c); g.lineTo(n.x * c + i + n.h * c, n.y * c); g.stroke(); }
+      g.restore(); g.strokeStyle = '#e5484d'; g.setLineDash([5, 4]); g.strokeRect(n.x * c, n.y * c, n.w * c, n.h * c); g.setLineDash([]);
+      if (n.name && n.w * c > 40) { g.font = `700 ${Math.max(9, c * .45)}px Inter,sans-serif`; g.fillStyle = '#ffb3ba'; g.textBaseline = 'top'; g.fillText(n.name.toUpperCase(), n.x * c + 5, n.y * c + 5); }
+    }
+    for (const w of M.walls || []) { g.fillStyle = '#5b6f99'; g.fillRect(w.x * c, w.y * c, w.w * c, w.h * c); }
     for (const [k, z] of Object.entries(M.zones)) {
       g.fillStyle = z.color + '33'; this._rr(g, z.x * c, z.y * c, z.w * c, z.h * c, 6); g.fill();
       g.setLineDash([5, 4]); g.strokeStyle = z.color + 'cc'; g.lineWidth = 1.2; g.stroke(); g.setLineDash([]);
@@ -38,8 +51,13 @@ export class Plan2D {
     [...M.shelves].sort((a, b) => a.y - b.y).forEach((s, i) => {
       const x = s.x * c, y = s.y * c, w = s.w * c, h = s.h * c;
       g.fillStyle = '#16295a'; this._rr(g, x, y, w, h, 4); g.fill(); g.strokeStyle = '#2a4a93'; g.lineWidth = 1; g.stroke();
-      g.strokeStyle = 'rgba(120,170,255,.28)'; for (let bx = s.x + 2; bx < s.x + s.w; bx += 2) { g.beginPath(); g.moveTo(bx * c, y + 2); g.lineTo(bx * c, y + h - 2); g.stroke(); }
-      g.font = `700 ${Math.max(9, c * .5)}px Inter,sans-serif`; g.fillStyle = '#6f8fc9'; g.textBaseline = 'middle'; g.textAlign = 'right'; g.fillText('A' + (i + 1), x - 6, y + h / 2); g.textAlign = 'left';
+      const hz = (s.orient || (s.w >= s.h ? 'h' : 'v')) === 'h';
+      g.strokeStyle = 'rgba(120,170,255,.28)';
+      if (hz) for (let bx = s.x + 2; bx < s.x + s.w; bx += 2) { g.beginPath(); g.moveTo(bx * c, y + 2); g.lineTo(bx * c, y + h - 2); g.stroke(); }
+      else for (let by = s.y + 2; by < s.y + s.h; by += 2) { g.beginPath(); g.moveTo(x + 2, by * c); g.lineTo(x + w - 2, by * c); g.stroke(); }
+      g.font = `700 ${Math.max(9, c * .5)}px Inter,sans-serif`; g.fillStyle = '#6f8fc9'; g.textBaseline = 'middle';
+      if (hz) { g.textAlign = 'right'; g.fillText(s.name || 'A' + (i + 1), x - 6, y + h / 2); } else { g.textAlign = 'center'; g.fillText(s.name || 'A' + (i + 1), x + w / 2, y - c * .5); }
+      g.textAlign = 'left';
     });
   }
   update(snap) { this.snap = snap; }
@@ -57,7 +75,7 @@ export class Plan2D {
       const a = (this.map.aisles || [])[row]; if (!a) continue;
       g.save(); g.fillStyle = 'rgba(245,197,66,.22)'; g.fillRect(a[0] * c, a[1] * c, a[2] * c, a[3] * c);
       g.strokeStyle = '#f5c542'; g.setLineDash([6, 4]); g.lineWidth = 2; g.strokeRect(a[0] * c, a[1] * c, a[2] * c, a[3] * c);
-      g.fillStyle = '#f5c542'; g.font = `700 ${Math.max(9, c * .55)}px Inter,sans-serif`; g.textBaseline = 'middle'; g.fillText(`A${row + 1} · MAINTENANCE`, a[0] * c + 6, (a[1] + a[3] / 2) * c); g.restore();
+      g.fillStyle = '#f5c542'; g.font = `700 ${Math.max(9, c * .55)}px Inter,sans-serif`; g.textBaseline = 'middle'; g.fillText(`${(this.map.shelves[row] && this.map.shelves[row].name) || 'A' + (row + 1)} · MAINTENANCE`, a[0] * c + 6, (a[1] + a[3] / 2) * c); g.restore();
     }
     for (const t of S.tasks) if (t.status === 'queued') {
       const x = (t.pickup[0] + .5) * c, y = (t.pickup[1] + .5) * c, R = Math.max(5, c * .32);

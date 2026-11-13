@@ -11,20 +11,22 @@ import mimetypes
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Dict, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from . import designs
+from . import layout as layout_mod
 from .allocator import ALLOCATORS
 from .experiments import JobManager
 from .mqtt_bridge import MqttBridge
 from .orders import KINDS
 from .sim import Simulation
 
-VERSION = "1.1"
+VERSION = "2.0-dev"
 
 # Windows can map .js to text/plain in its registry; browsers then refuse to run ES modules.
 # Register the correct types explicitly so the console works on every machine.
@@ -111,6 +113,27 @@ class LayoutIn(BaseModel):
     name: str = Field(description="File name from GET /api/layouts, e.g. warehouse.yaml")
 
 
+class LayoutDoc(BaseModel):
+    """A layout drawn in the designer (metres). Unknown fields are kept; values are snapped and clamped on the server."""
+    model_config = {"extra": "allow"}
+    name: str = "Untitled layout"
+    width_m: float = Field(60, ge=1, le=500)
+    height_m: float = Field(40, ge=1, le=500)
+    elements: List[Dict[str, Any]] = Field(default_factory=list,
+                                           description="{id, type: rack|wall|nogo|packing|dock|pallet_area|charging, x, y, w, h}")
+    robots: Dict[str, int] = Field(default_factory=dict)
+    orders: Dict[str, float] = Field(default_factory=dict)
+
+
+class SaveIn(BaseModel):
+    layout: LayoutDoc
+    note: str = ""
+
+
+class ApplyIn(BaseModel):
+    version: Optional[int] = None
+
+
 class CompareIn(BaseModel):
     runs: int = Field(10, ge=1, le=30, description="Shifts per scenario (the brief asks for 10)")
     shift_hours: float = Field(8, ge=0.5, le=12)
@@ -132,6 +155,11 @@ class WhatIfIn(BaseModel):
 def _layout_path(name: Optional[str]) -> Path:
     if not name:
         return Path(sim.config_path)
+    if name.startswith("design:"):                      # a layout compiled from the designer
+        p = (designs.COMPILED / (name[7:] + ".yaml")).resolve()
+        if p.parent != designs.COMPILED.resolve() or not p.exists():
+            raise HTTPException(404, f"unknown layout {name}")
+        return p
     p = (CONFIG_DIR / name).resolve()
     if p.parent != CONFIG_DIR.resolve() or p.suffix not in (".yaml", ".yml") or not p.exists():
         raise HTTPException(404, f"unknown layout {name}")
@@ -243,7 +271,78 @@ async def layouts():
         out.append({"file": p.name, "name": c.get("name"), "width": c["width"], "height": c["height"],
                     "robots": sum(t["count"] for t in c["robot_types"].values()),
                     "active": p.resolve() == Path(sim.config_path).resolve()})
+    cur = Path(sim.config_path).resolve()
+    if cur.parent == designs.COMPILED.resolve():         # the live twin runs a designed layout
+        out.append({"file": "design:" + cur.stem, "name": sim.cfg.get("name"), "width": sim.cfg["width"],
+                    "height": sim.cfg["height"], "robots": len(sim.robots), "active": True, "design": True})
     return out
+
+
+# ---------------------------------------------------------------- layout designer
+@app.get("/api/catalog", tags=["designer"], summary="Element types and robot catalog for the designer")
+async def get_catalog():
+    """Element types (rack, wall, no-go, packing, dock, pallet area, charging) and robot types with footprint and price."""
+    return layout_mod.catalog()
+
+
+@app.get("/api/designs", tags=["designer"], summary="Saved layouts and example templates")
+async def list_designs():
+    return designs.list_designs()
+
+
+@app.get("/api/designs/{did}", tags=["designer"], summary="One layout (latest or a given version)")
+async def get_design(did: str, version: Optional[int] = None):
+    try:
+        return designs.get(did, version)
+    except KeyError:
+        raise HTTPException(404, f"unknown design {did}")
+
+
+@app.get("/api/designs/{did}/versions", tags=["designer"], summary="Version history of a layout")
+async def design_versions(did: str):
+    try:
+        return designs.versions(did)
+    except KeyError:
+        raise HTTPException(404, f"unknown design {did}")
+
+
+@app.post("/api/designs", tags=["designer"], status_code=201, summary="Save a new layout")
+async def create_design(body: SaveIn):
+    L = layout_mod.normalise(body.layout.model_dump())
+    return designs.save(L, None, body.note)
+
+
+@app.put("/api/designs/{did}", tags=["designer"], summary="Save a new version of a layout")
+async def update_design(did: str, body: SaveIn):
+    """Every save is a new version. Saving an example template creates your own copy."""
+    L = layout_mod.normalise(body.layout.model_dump())
+    try:
+        return designs.save(L, did, body.note)
+    except KeyError:
+        raise HTTPException(404, f"unknown design {did}")
+
+
+@app.post("/api/designs/check", tags=["designer"], summary="Check a layout for problems")
+async def check_design(body: LayoutDoc):
+    """Errors (block a run) and warnings: unreachable stations, racks without a face, aisles too narrow for a robot ..."""
+    rep = layout_mod.check_layout(body.model_dump())
+    rep.pop("config", None)
+    return rep
+
+
+@app.post("/api/designs/{did}/apply", tags=["designer"], summary="Run a shift on a saved layout")
+async def apply_design(did: str, body: ApplyIn):
+    """Compiles the layout to the simulation map and loads it into the live twin (the running shift is replaced)."""
+    try:
+        d = designs.get(did, body.version)
+    except KeyError:
+        raise HTTPException(404, f"unknown design {did}")
+    cfg, rep = layout_mod.compile_layout(d["layout"])
+    if not rep["ok"]:
+        raise HTTPException(422, {"msg": "Fix the errors before running.", "problems": rep["problems"]})
+    path = designs.write_compiled(did, d["version"], cfg)
+    _new_sim(path, sim.mode)
+    return {"layout": "design:" + path.stem, "site": sim.cfg.get("name"), "warnings": rep["warnings"]}
 
 
 # ---------------------------------------------------------------- write

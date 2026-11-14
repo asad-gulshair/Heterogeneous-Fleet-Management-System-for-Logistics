@@ -13,7 +13,9 @@ const D = {
   cat: null, L: null, did: null, version: null, template: false, dirty: false,
   sel: new Set(), tool: 'select', undo: [], redo: [], view: { s: 12, ox: 40, oy: 40 },
   rep: null, checkTimer: null, drag: null, inited: false, hover: null, nextId: 1,
+  measure: null, bgImg: null,                          // scale tool points; the plan <image> node (kept, never reloaded)
 };
+const PLAN_TOOLS = { scale: 'measure', plan: 'plan' };
 
 // ------------------------------------------------------------------ public
 export async function showDesigner() {
@@ -23,7 +25,7 @@ export async function showDesigner() {
 
 async function init() {
   D.cat = await api.get('/api/catalog');
-  buildTools(); bindTop(); bindCanvas(); bindKeys();
+  buildTools(); bindTop(); bindCanvas(); bindKeys(); bindPlan(); bindRobotDialog();
   window.addEventListener('resize', resize);
   window.addEventListener('beforeunload', e => { if (D.dirty) { e.preventDefault(); e.returnValue = ''; } });
   await refreshOpen();
@@ -54,14 +56,16 @@ function setLayout(L, did, version, template) {
   D.did = did; D.version = version; D.template = !!template;
   D.sel.clear(); D.undo = []; D.redo = []; markDirty(false);
   $('dzName').value = D.L.name || '';
-  buildRobots(); fit(); render(); props(); check(); refreshVersions();
+  D.L.custom_robots = D.L.custom_robots || {};
+  D.measure = null; $('dzScaleBox').hidden = true; if (PLAN_TOOLS[D.tool]) D.tool = 'select';
+  buildRobots(); buildPlan(); fit(); render(); props(); check(); refreshVersions();
 }
 function snapshot() { return JSON.stringify(D.L); }
 function change(fn) {                                 // every edit goes through here: undo + dirty + re-check
   D.undo.push(snapshot()); if (D.undo.length > 150) D.undo.shift(); D.redo = [];
   fn(); markDirty(true); render(); props(); check();
 }
-function restore(json) { D.L = JSON.parse(json); D.sel = new Set([...D.sel].filter(byId)); markDirty(true); buildRobots(); render(); props(); check(); }
+function restore(json) { D.L = JSON.parse(json); D.sel = new Set([...D.sel].filter(byId)); markDirty(true); buildRobots(); buildPlan(); render(); props(); check(); }
 function undo() { if (!D.undo.length) return; D.redo.push(snapshot()); restore(D.undo.pop()); }
 function redo() { if (!D.redo.length) return; D.undo.push(snapshot()); restore(D.redo.pop()); }
 function markDirty(on) {
@@ -142,24 +146,271 @@ function buildTools() {
   $('dzTools').onclick = e => { const b = e.target.closest('[data-t]'); if (b) setTool(b.dataset.t); };
 }
 function setTool(t) {
+  if (t !== 'scale') { D.measure = null; $('dzScaleBox').hidden = true; }
   D.tool = t;
   document.querySelectorAll('.dz-tool').forEach(b => b.classList.toggle('on', b.dataset.t === t));
-  $('dzSvg').classList.toggle('draw', t !== 'select');
-  $('dzStatus').textContent = t !== 'select' ? `Drag on the floor to draw a ${D.cat.elements[t].label.toLowerCase()} · Shift keeps the tool · Esc to stop` : '';
+  const svg = $('dzSvg');
+  svg.classList.toggle('draw', !!D.cat.elements[t]); svg.classList.toggle('measure', t === 'scale'); svg.classList.toggle('plan', t === 'plan');
+  $('dzStatus').textContent = toolHint();
+  if (D.L) { buildPlan(); render(); }
+}
+function toolHint() {
+  if (D.tool === 'scale') return D.measure && D.measure.a ? 'Now click the second point (Shift = straight line) · Esc to cancel'
+    : 'Click the first point of a distance you know on the plan, e.g. one end of a dimensioned wall';
+  if (D.tool === 'plan') return 'Drag to move the floor plan under your drawing · arrows nudge 10 cm (Shift 1 m) · Esc when done';
+  if (D.cat.elements[D.tool]) return `Drag on the floor to draw a ${D.cat.elements[D.tool].label.toLowerCase()} · Shift keeps the tool · Esc to stop`;
+  return '';
+}
+function allRobots() {                               // built-in catalog + this layout's own robot types
+  const out = { ...D.cat.robots };
+  for (const [k, r] of Object.entries(D.L.custom_robots || {})) out[k] = { ...r, custom: true };
+  return out;
 }
 function buildRobots() {
-  $('dzRobots').innerHTML = Object.entries(D.cat.robots).map(([k, r]) => `
-    <div class="dz-robot"><b>${esc(r.label)}</b>
+  const R = allRobots();
+  $('dzRobots').innerHTML = Object.entries(R).map(([k, r]) => `
+    <div class="dz-robot"><b>${r.custom ? `<span class="dot" style="background:${esc(r.color)}"></span>` : ''}${esc(r.label)}${r.custom ? '<span class="tag">custom</span>' : ''}</b>
       <span class="dz-step"><button data-r="${k}" data-d="-1">−</button><input data-r="${k}" type="number" min="0" max="200" value="${D.L.robots[k] || 0}"><button data-r="${k}" data-d="1">+</button></span>
-      <small>${r.width_m} × ${r.length_m} m · ${esc(r.does)}</small></div>`).join('');
+      <small>${r.width_m} × ${r.length_m} m · ${r.custom ? `${esc(D.cat.roles[r.role].label.toLowerCase())} · ${r.speed_mps} m/s · €${Math.round(r.cost_eur / 1000)}k`
+        : esc(r.does)}${r.custom ? ` <button class="ed" data-edit="${k}" title="Edit">Edit</button><button class="ed" data-del="${k}" title="Remove from this layout">Remove</button>` : ''}</small></div>`).join('');
   $('dzRobots').onclick = e => {
+    const ed = e.target.closest('[data-edit]'); if (ed) { openRobotDlg(ed.dataset.edit); return; }
+    const del = e.target.closest('[data-del]');
+    if (del) {
+      const k = del.dataset.del, name = D.L.custom_robots[k].label;
+      change(() => { delete D.L.custom_robots[k]; delete D.L.robots[k]; }); buildRobots();
+      toast(`Removed ${name} from this layout (Ctrl+Z to undo)`); return;
+    }
     const b = e.target.closest('button[data-r]'); if (!b) return;
-    change(() => { D.L.robots[b.dataset.r] = Math.max(0, (D.L.robots[b.dataset.r] || 0) + +b.dataset.d); });
+    change(() => { D.L.robots[b.dataset.r] = Math.max(0, Math.min(200, (D.L.robots[b.dataset.r] || 0) + +b.dataset.d)); });
     buildRobots();
   };
-  $('dzRobots').onchange = e => { const i = e.target.closest('input[data-r]'); if (i) change(() => { D.L.robots[i.dataset.r] = Math.max(0, Math.min(200, +i.value || 0)); }); };
+  $('dzRobots').onchange = e => { const i = e.target.closest('input[data-r]'); if (i) change(() => { D.L.robots[i.dataset.r] = Math.max(0, Math.min(200, Math.round(+i.value || 0))); }); };
+  const lib = Object.entries(D.cat.library || {}).filter(([k]) => !(k in (D.L.custom_robots || {})));
+  $('dzLib').hidden = !lib.length;
+  $('dzLib').innerHTML = '<option value="">Add a saved robot type…</option>' + lib.map(([k, r]) => `<option value="${k}">${esc(r.label)} · ${esc(r.vendor)}</option>`).join('');
   $('dzOrders').innerHTML = Object.keys(D.cat.orders).map(k => `<span>${ORDER_NAMES[k] || k}</span><input data-o="${k}" type="number" min="0" max="5000" value="${D.L.orders[k] ?? 0}">`).join('');
   $('dzOrders').onchange = e => { const i = e.target.closest('input[data-o]'); if (i) change(() => { D.L.orders[i.dataset.o] = Math.max(0, +i.value || 0); }); };
+}
+
+// ------------------------------------------------------------------ custom robot types
+const ROBOT_NUM = ['width_m', 'length_m', 'speed_mps', 'battery_kwh', 'cost_eur'];
+const aisleNeed = w => Math.max(1, Math.ceil(w + 2 * D.cat.safety_m - 1e-9));
+function roleDefaults(role) {
+  const r = D.cat.robots[D.cat.roles[role].model];
+  return { width_m: r.width_m, length_m: r.length_m, speed_mps: r.speed_mps, battery_kwh: r.battery_kwh, cost_eur: r.cost_eur };
+}
+function openRobotDlg(key = null) {
+  const f = $('dzRobotForm'), dlg = $('dzRobotDlg'), cur = key ? D.L.custom_robots[key] : null;
+  D.editRobot = key;
+  $('dzRobotTitle').textContent = cur ? `Edit ${cur.label}` : 'New robot type';
+  $('dzRobotOk').textContent = cur ? 'Save changes' : 'Add robot type';
+  const v = cur || { label: '', role: 'carry_tote', vendor: '', adapter: 'vda5050', color: '#a78bfa', ...roleDefaults('carry_tote') };
+  f.label.value = v.label; f.role.value = v.role; f.vendor.value = v.vendor === 'Custom' ? '' : v.vendor; f.adapter.value = v.adapter;
+  ROBOT_NUM.forEach(n => { f[n].value = v[n]; }); f.color.value = v.color || '#a78bfa';
+  robotNeed(); dlg.showModal(); f.label.focus();
+}
+function robotNeed() {
+  const f = $('dzRobotForm'), w = +f.width_m.value || 0, role = f.role.value;
+  $('dzRobotNeed').textContent = w > 0 ? `Needs aisles at least ${aisleNeed(w)} m wide (${w} m + ${D.cat.safety_m} m each side).`
+    + (role === 'scan' ? ' Flies over racks, like the drone.' : role === 'high_pick' ? ' Hands its totes to a tote carrier, like the TL-65.' : '') : '';
+}
+function uniqueKey(label) {
+  const base = 'c_' + ((label || 'robot').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 24) || 'robot');
+  let k = base, i = 2;
+  while (k in (D.L.custom_robots || {}) || k in D.cat.robots) k = `${base.slice(0, 27)}_${i++}`;
+  return k;
+}
+function bindRobotDialog() {
+  const f = $('dzRobotForm'), dlg = $('dzRobotDlg');
+  f.role.innerHTML = Object.entries(D.cat.roles).map(([k, r]) => `<option value="${k}">${esc(r.label)}: ${esc(r.does.toLowerCase())}</option>`).join('');
+  f.adapter.innerHTML = Object.entries(D.cat.adapters).map(([k, l]) => `<option value="${k}">${esc(l)}</option>`).join('');
+  f.role.onchange = () => { if (!D.editRobot) { const d = roleDefaults(f.role.value); ROBOT_NUM.forEach(n => { f[n].value = d[n]; }); } robotNeed(); };
+  f.width_m.oninput = robotNeed;
+  $('dzNewRobot').onclick = () => openRobotDlg();
+  $('dzLib').onchange = e => {
+    const k = e.target.value; e.target.value = ''; if (!k) return;
+    const r = D.cat.library[k];
+    change(() => { D.L.custom_robots[k] = { ...r }; D.L.robots[k] = D.L.robots[k] || 1; });
+    buildRobots(); toast(`Added ${r.label}`, true);
+  };
+  dlg.addEventListener('close', async () => {
+    if (dlg.returnValue !== 'ok') return;
+    const lim = D.cat.limits, num = n => Math.max(lim[n][0], Math.min(lim[n][1], +f[n].value || lim[n][0]));
+    const role = f.role.value, d = {
+      label: f.label.value.trim().slice(0, 40) || D.cat.roles[role].label, role, vendor: f.vendor.value.trim().slice(0, 40) || 'Custom',
+      adapter: f.adapter.value, interface: D.cat.adapters[f.adapter.value], color: f.color.value,
+      flying: role === 'scan', model: D.cat.roles[role].model, does: D.cat.roles[role].does,
+    };
+    ROBOT_NUM.forEach(n => { d[n] = n === 'cost_eur' ? Math.round(num(n)) : Math.round(num(n) * 100) / 100; });
+    const key = D.editRobot || uniqueKey(d.label);
+    change(() => { D.L.custom_robots[key] = d; if (D.L.robots[key] == null) D.L.robots[key] = 1; });
+    buildRobots();
+    toast(`${D.editRobot ? 'Updated' : 'Added'} ${d.label}`, true);
+    if (f.lib.checked) {
+      try {
+        const r = await fetch(`/api/robot-types/${key}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) });
+        if (r.ok) { D.cat.library = await api.get('/api/robot-types'); buildRobots(); }
+      } catch (e) { /* library is optional; the layout keeps its own copy */ }
+    }
+  });
+}
+
+// ------------------------------------------------------------------ floor plan (background image)
+const r2 = v => Math.round(v * 100) / 100;
+const dist = (a, b) => Math.hypot(b.x - a.x, b.y - a.y);
+const axisLock = (a, w) => Math.abs(w.x - a.x) >= Math.abs(w.y - a.y) ? { x: w.x, y: a.y } : { x: a.x, y: w.y };
+const bgSize = b => ({ w: b.w_px * b.m_per_px, h: b.h_px * b.m_per_px });
+const bgCenter = b => { const z = bgSize(b); return { x: b.x + z.w / 2, y: b.y + z.h / 2 }; };
+function rotPt(p, c, deg) {                           // same rotation as SVG rotate(deg cx cy), y pointing down
+  const a = deg * Math.PI / 180, cs = Math.cos(a), sn = Math.sin(a), dx = p.x - c.x, dy = p.y - c.y;
+  return { x: c.x + dx * cs - dy * sn, y: c.y + dx * sn + dy * cs };
+}
+const toImg = (b, p) => { const q = rotPt(p, bgCenter(b), -b.rot); return { u: (q.x - b.x) / b.m_per_px, v: (q.y - b.y) / b.m_per_px }; };
+function placeKeeping(b, uv, world, m) {              // new scale m, image pixel uv stays on the world point
+  const o = rotPt({ x: (uv.u - b.w_px / 2) * m, y: (uv.v - b.h_px / 2) * m }, { x: 0, y: 0 }, b.rot);
+  b.m_per_px = m; b.x = world.x - o.x - b.w_px * m / 2; b.y = world.y - o.y - b.h_px * m / 2;
+}
+function bgBox(b) {
+  const z = bgSize(b), c = bgCenter(b);
+  const P = [[b.x, b.y], [b.x + z.w, b.y], [b.x, b.y + z.h], [b.x + z.w, b.y + z.h]].map(([x, y]) => rotPt({ x, y }, c, b.rot));
+  return { x0: Math.min(...P.map(p => p.x)), y0: Math.min(...P.map(p => p.y)), x1: Math.max(...P.map(p => p.x)), y1: Math.max(...P.map(p => p.y)) };
+}
+function renderPlan(g, s) {
+  const b = D.L.background; if (!b || !b.show) return;
+  const z = bgSize(b), c = bgCenter(b);
+  if (!D.bgImg) D.bgImg = document.createElementNS(NS, 'image');
+  const img = D.bgImg, href = `/api/backgrounds/${b.id}`;
+  if (img.getAttribute('href') !== href) img.setAttribute('href', href);
+  for (const [k, v] of Object.entries({ x: b.x, y: b.y, width: z.w, height: z.h, preserveAspectRatio: 'none', opacity: b.opacity,
+    transform: `rotate(${b.rot} ${c.x} ${c.y})`, 'pointer-events': 'none' })) img.setAttribute(k, v);
+  img.setAttribute('style', b.invert ? 'filter:invert(1) hue-rotate(180deg)' : '');
+  g.appendChild(img);
+  if (D.tool === 'plan') {
+    el('rect', { x: b.x, y: b.y, width: z.w, height: z.h, fill: 'none', stroke: '#f5a524', 'stroke-width': 2 / s, 'stroke-dasharray': `${6 / s} ${4 / s}`,
+      transform: `rotate(${b.rot} ${c.x} ${c.y})`, 'pointer-events': 'none' }, g);
+  }
+}
+function renderMeasure(g, s) {
+  const m = D.measure; if (!m || !m.a) return;
+  const e = m.b || m.cur; if (!e) { el('circle', { cx: m.a.x, cy: m.a.y, r: 5 / s, fill: '#f5a524' }, g); return; }
+  el('line', { x1: m.a.x, y1: m.a.y, x2: e.x, y2: e.y, stroke: '#041225', 'stroke-width': 5 / s, 'stroke-linecap': 'round' }, g);
+  el('line', { x1: m.a.x, y1: m.a.y, x2: e.x, y2: e.y, stroke: '#f5a524', 'stroke-width': 2.5 / s, 'stroke-linecap': 'round' }, g);
+  for (const p of [m.a, e]) el('circle', { cx: p.x, cy: p.y, r: 5 / s, fill: '#f5a524', stroke: '#041225', 'stroke-width': 1.5 / s }, g);
+  el('text', { x: (m.a.x + e.x) / 2, y: (m.a.y + e.y) / 2 - 9 / s, 'font-size': 12 / s, fill: '#f5a524', 'text-anchor': 'middle', 'font-weight': 700,
+    stroke: '#041225', 'stroke-width': 3 / s, 'paint-order': 'stroke' }, g).textContent = `${dist(m.a, e).toFixed(2)} m`;
+}
+function measureClick(w, shift) {
+  const b = D.L.background;
+  if (b && b.locked) { toast('The floor plan is locked. Untick Lock to change its scale.'); return; }
+  if (!D.measure || !D.measure.a || D.measure.b) { D.measure = { a: w, b: null, cur: null }; $('dzScaleBox').hidden = true; }
+  else {
+    const p = shift ? axisLock(D.measure.a, w) : w;
+    if (dist(D.measure.a, p) < 0.05) return;
+    D.measure.b = p;
+    $('dzScaleNow').textContent = `On the plan this line is ${dist(D.measure.a, p).toFixed(2)} m now. Type its real length.`;
+    $('dzScaleBox').hidden = false; $('dzScaleM').value = ''; setTimeout(() => $('dzScaleM').focus(), 0);
+  }
+  $('dzStatus').textContent = toolHint(); render();
+}
+function applyScale() {
+  const m = D.measure, b = D.L.background, real = +$('dzScaleM').value;
+  if (!m || !m.b || !b) return;
+  if (!(real > 0)) { toast('Type the real distance in metres.'); return; }
+  const px = dist(m.a, m.b) / b.m_per_px, mpp = real / px;
+  if (Math.max(b.w_px, b.h_px) * mpp > 2000) { toast(`That makes the plan ${Math.round(b.w_px * mpp)} m wide. Check the distance.`); return; }
+  const uv = toImg(b, m.a), a = m.a;
+  change(() => { placeKeeping(D.L.background, uv, a, mpp); D.L.background.scaled = true; });
+  setTool('select');
+  const z = bgSize(D.L.background);
+  toast(`Scale set: the plan is ${z.w.toFixed(1)} × ${z.h.toFixed(1)} m`, true);
+  if (!els().length) fitFloorToPlan(true); else buildPlan();
+}
+function fitFloorToPlan(quiet = false) {
+  const b = D.L.background; if (!b) return;
+  const bx = bgBox(b), dx = -Math.floor(bx.x0), dy = -Math.floor(bx.y0);
+  const W = Math.max(10, Math.ceil(bx.x1 + dx - 1e-6)), H = Math.max(10, Math.ceil(bx.y1 + dy - 1e-6));
+  if (W > 500 || H > 500) { toast(`The plan is ${Math.round(bx.x1 - bx.x0)} × ${Math.round(bx.y1 - bx.y0)} m, over the 500 m limit. Set the scale first.`); return; }
+  change(() => {
+    D.L.background.x = r2(D.L.background.x + dx); D.L.background.y = r2(D.L.background.y + dy);
+    for (const e of els()) { e.x += dx; e.y += dy; }                  // the drawing moves with the plan
+    D.L.width_m = W; D.L.height_m = H;
+  });
+  fit(); render(); buildPlan();
+  if (!quiet) toast(`Floor is now ${W} × ${H} m, the size of the plan`, true);
+  else toast(`Floor set to ${W} × ${H} m from the plan. Now trace it: draw racks, walls and stations on top.`, true);
+}
+async function uploadPlan(file, page = 1) {
+  if (!file) return;
+  if (file.size > 40 * 2 ** 20) { toast('The file is over 40 MB. Export a smaller PDF or image.'); return; }
+  $('dzPlan').innerHTML = `<div class="dz-plan"><div class="meta">Loading ${esc(file.name)}…</div></div>`;
+  try {
+    const r = await fetch(`/api/backgrounds?name=${encodeURIComponent(file.name)}&page=${page}`, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: file });
+    const j = await r.json(); if (!r.ok) throw new Error(typeof j.detail === 'string' ? j.detail : r.statusText);
+    const m = Math.min(D.L.width_m / j.w_px, D.L.height_m / j.h_px);      // first guess: fit on the floor; the scale tool fixes it
+    change(() => { D.L.background = { ...j, x: 0, y: 0, m_per_px: m, rot: 0, opacity: 0.6, show: true, locked: false, invert: true, scaled: false }; });
+    setTool('scale');
+    toast(`Plan loaded${j.pages > 1 ? ` (page ${j.page} of ${j.pages})` : ''}. Now set the scale: click two points you know the distance between.`, true);
+  } catch (e) { toast('Could not load the plan: ' + e.message); }
+  buildPlan();
+}
+async function setPlanPage(page) {
+  const b = D.L.background;
+  try {
+    const j = await api.post(`/api/backgrounds/pdf/${b.source}/page/${page}?name=${encodeURIComponent(b.name)}`);
+    change(() => Object.assign(D.L.background, { id: j.id, w_px: j.w_px, h_px: j.h_px, page: j.page, pages: j.pages, paper_mm: j.paper_mm }));
+  } catch (e) { /* toast shown by api.post */ }
+  buildPlan();
+}
+function buildPlan() {
+  const box = $('dzPlan'), b = D.L && D.L.background;
+  if (!b) {
+    box.innerHTML = `<button class="dz-upload" id="pUp">Upload floor plan<small>PDF, PNG or JPG · or drop it on the floor</small></button>`;
+    $('pUp').onclick = () => $('dzFile').click(); return;
+  }
+  const z = bgSize(b);
+  box.innerHTML = `<div class="dz-plan">
+    <div class="meta"><b>${esc(b.name || 'Floor plan')}</b><br>${b.scaled ? `<span class="good">Scale set</span> · plan ${z.w.toFixed(1)} × ${z.h.toFixed(1)} m · 1 px = ${(b.m_per_px * 100).toFixed(1)} cm`
+      : '<span class="warn">Scale not set yet.</span> Click Set scale, then two points of a known distance.'}</div>
+    ${b.pages > 1 ? `<div class="row">Page <select id="pPage">${Array.from({ length: Math.min(b.pages, 200) }, (_, i) => `<option ${i + 1 === b.page ? 'selected' : ''}>${i + 1}</option>`).join('')}</select> of ${b.pages}</div>` : ''}
+    <div class="btns"><button class="btn sm ${D.tool === 'scale' ? 'on' : ''}" id="pScale" title="Click two points you know the real distance between">Set scale</button>
+      <button class="btn sm ${D.tool === 'plan' ? 'on' : ''}" id="pMove" ${b.locked ? 'disabled' : ''} title="Drag the plan so it lines up with the floor">Move plan</button>
+      <button class="btn sm" id="pFloor" title="Make the floor exactly the size of the plan">Floor = plan</button>
+      <button class="btn sm" id="pTurn" ${b.locked ? 'disabled' : ''} title="Turn the plan 90°">Turn 90°</button></div>
+    <div class="row">Fade <input type="range" id="pOp" min="0.1" max="1" step="0.05" value="${b.opacity}"></div>
+    <div class="row">Angle <input type="number" id="pRot" step="0.5" value="${b.rot}" ${b.locked ? 'disabled' : ''}> °</div>
+    <div class="checks"><label class="dz-check"><input type="checkbox" id="pShow" ${b.show ? 'checked' : ''}>Show</label>
+      <label class="dz-check" title="Stop the plan moving by accident"><input type="checkbox" id="pLock" ${b.locked ? 'checked' : ''}>Lock</label>
+      <label class="dz-check" title="Show a white paper plan as dark lines on light"><input type="checkbox" id="pInv" ${b.invert ? 'checked' : ''}>Dark</label></div>
+    <div class="btns"><button class="btn sm" id="pReplace">Replace</button><button class="btn sm danger" id="pRemove">Remove</button></div></div>`;
+  $('pScale').onclick = () => setTool(D.tool === 'scale' ? 'select' : 'scale');
+  $('pMove').onclick = () => setTool(D.tool === 'plan' ? 'select' : 'plan');
+  $('pFloor').onclick = () => fitFloorToPlan();
+  $('pTurn').onclick = () => change(() => { D.L.background.rot = ((D.L.background.rot + 90 + 180) % 360) - 180; });
+  $('pRot').onchange = e => change(() => { D.L.background.rot = Math.max(-360, Math.min(360, +e.target.value || 0)); });
+  $('pOp').oninput = e => { if (!D.opSnap) D.opSnap = snapshot(); D.L.background.opacity = +e.target.value; render(); };
+  $('pOp').onchange = () => { if (D.opSnap) { D.undo.push(D.opSnap); D.redo = []; D.opSnap = null; } markDirty(true); };
+  $('pShow').onchange = e => change(() => { D.L.background.show = e.target.checked; });
+  $('pLock').onchange = e => { change(() => { D.L.background.locked = e.target.checked; }); if (e.target.checked && PLAN_TOOLS[D.tool]) setTool('select'); };
+  $('pInv').onchange = e => change(() => { D.L.background.invert = e.target.checked; });
+  $('pReplace').onclick = () => $('dzFile').click();
+  $('pRemove').onclick = () => { if (PLAN_TOOLS[D.tool]) setTool('select'); change(() => { D.L.background = null; }); toast('Floor plan removed (Ctrl+Z to undo)'); };
+  if ($('pPage')) $('pPage').onchange = e => setPlanPage(+e.target.value);
+}
+function bindPlan() {
+  $('dzFile').onchange = e => { const f = e.target.files[0]; e.target.value = ''; uploadPlan(f); };
+  const wrap = $('dzWrap'); let depth = 0;
+  const has = ev => [...(ev.dataTransfer && ev.dataTransfer.types || [])].includes('Files');
+  wrap.addEventListener('dragenter', ev => { if (!has(ev)) return; ev.preventDefault(); depth++; wrap.classList.add('dragover'); });
+  wrap.addEventListener('dragover', ev => { if (has(ev)) ev.preventDefault(); });
+  wrap.addEventListener('dragleave', () => { if (--depth <= 0) { depth = 0; wrap.classList.remove('dragover'); } });
+  wrap.addEventListener('drop', ev => {
+    if (!has(ev)) return; ev.preventDefault(); depth = 0; wrap.classList.remove('dragover');
+    uploadPlan(ev.dataTransfer.files[0]);
+  });
+  $('dzScaleOk').onclick = applyScale;
+  $('dzScaleNo').onclick = () => setTool('select');
+  $('dzScaleM').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); applyScale(); } if (e.key === 'Escape') setTool('select'); });
 }
 
 // ------------------------------------------------------------------ canvas: view
@@ -181,6 +432,7 @@ function render() {
   const g = el('g', { transform: `translate(${ox},${oy}) scale(${s})` }, svg);
   // floor + grid (1 m minor, 5 m major)
   el('rect', { x: 0, y: 0, width: W, height: H, fill: '#081634', stroke: '#2b4c8f', 'stroke-width': 2 / s }, g);
+  renderPlan(g, s);
   if (s >= 5) { const p = []; for (let x = 1; x < W; x++) if (x % 5) p.push(`M${x} 0V${H}`); for (let y = 1; y < H; y++) if (y % 5) p.push(`M0 ${y}H${W}`); el('path', { d: p.join(''), stroke: '#10264f', 'stroke-width': 1 / s }, g); }
   { const p = []; for (let x = 5; x < W; x += 5) p.push(`M${x} 0V${H}`); for (let y = 5; y < H; y += 5) p.push(`M0 ${y}H${W}`); el('path', { d: p.join(''), stroke: '#173467', 'stroke-width': 1 / s }, g); }
   // problems -> outline colour per element
@@ -228,6 +480,7 @@ function render() {
     el('rect', { x: r.x, y: r.y, width: r.w, height: r.h, fill: t.color, 'fill-opacity': .35, stroke: t.color, 'stroke-width': 2 / s }, g);
     el('text', { x: r.x + r.w / 2, y: r.y - 10 / s, 'font-size': 11 / s, fill: '#6cc4ff', 'text-anchor': 'middle' }, g).textContent = `${r.w} × ${r.h} m`;
   }
+  renderMeasure(g, s);
   // rulers: every 5 / 10 m
   const step = s < 6 ? 10 : 5;
   for (let x = 0; x <= W; x += step) el('text', { x: ox + x * s, y: oy - 6, 'font-size': 10, fill: '#5f769f', 'text-anchor': 'middle' }, svg).textContent = x;
@@ -243,6 +496,12 @@ function bindCanvas() {
     if (ev.button === 1 || ev.button === 2) { startPan(ev); return; }
     svg.focus(); svg.setPointerCapture(ev.pointerId);
     const w = toWorld(ev), h = ev.target.dataset && ev.target.dataset.h;
+    if (D.tool === 'scale') { measureClick(w, ev.shiftKey); return; }
+    if (D.tool === 'plan') {
+      const b = D.L.background; if (!b) return;
+      if (b.locked) { toast('The floor plan is locked. Untick Lock to move it.'); return; }
+      D.undo.push(snapshot()); D.drag = { kind: 'plan', w0: w, x: b.x, y: b.y, moved: false }; return;
+    }
     if (h && D.sel.size === 1) { const e = byId([...D.sel][0]); D.undo.push(snapshot()); D.drag = { kind: 'resize', h, e, start: { ...e }, w0: w }; return; }
     if (D.tool !== 'select') { const x = clampX(snap(w.x)), y = clampY(snap(w.y)); D.drag = { kind: 'draw', type: D.tool, x0: x, y0: y, rect: { x, y, w: 1, h: 1 }, moved: false }; return; }
     const e = hitElement(ev.target);
@@ -259,7 +518,11 @@ function bindCanvas() {
   svg.addEventListener('pointermove', ev => {
     const w = toWorld(ev);
     status(w);
+    if (D.tool === 'scale' && D.measure && D.measure.a && !D.measure.b) { D.measure.cur = ev.shiftKey ? axisLock(D.measure.a, w) : w; render(); }
     const d = D.drag; if (!d) return;
+    if (d.kind === 'plan') {
+      const b = D.L.background; b.x = r2(d.x + w.x - d.w0.x); b.y = r2(d.y + w.y - d.w0.y); d.moved = true; render(); return;
+    }
     if (d.kind === 'pan') { D.view.ox = d.ox + ev.clientX - d.cx; D.view.oy = d.oy + ev.clientY - d.cy; render(); return; }
     if (d.kind === 'draw') {
       const x = clampX(snap(w.x)), y = clampY(snap(w.y));
@@ -297,6 +560,7 @@ function bindCanvas() {
       if (!eventShift) setTool('select');
       return;
     }
+    if (d.kind === 'plan') { if (d.moved) { D.redo = []; markDirty(true); } else D.undo.pop(); buildPlan(); return; }
     if (d.kind === 'move' || d.kind === 'resize') {
       if (d.moved) { D.redo = []; markDirty(true); props(); check(); } else D.undo.pop();
       render();
@@ -318,7 +582,11 @@ function bindCanvas() {
 function startPan(ev) { const svg = $('dzSvg'); svg.setPointerCapture(ev.pointerId); svg.classList.add('panning'); D.drag = { kind: 'pan', cx: ev.clientX, cy: ev.clientY, ox: D.view.ox, oy: D.view.oy }; }
 function status(w) {
   const inside = w.x >= 0 && w.y >= 0 && w.x <= D.L.width_m && w.y <= D.L.height_m;
-  $('dzStatus').textContent = inside ? `x ${w.x.toFixed(1)} m · y ${w.y.toFixed(1)} m` + (D.tool !== 'select' ? ` · drawing ${D.cat.elements[D.tool].label.toLowerCase()} (Esc to stop)` : '') : '';
+  if (D.tool === 'scale' || D.tool === 'plan') {
+    const m = D.measure, live = m && m.a ? dist(m.a, m.b || m.cur || w) : null;
+    $('dzStatus').textContent = (live != null ? `${live.toFixed(2)} m on the plan now · ` : '') + toolHint(); return;
+  }
+  $('dzStatus').textContent = inside ? `x ${w.x.toFixed(1)} m · y ${w.y.toFixed(1)} m` + (D.cat.elements[D.tool] ? ` · drawing ${D.cat.elements[D.tool].label.toLowerCase()} (Esc to stop)` : '') : '';
 }
 function bindKeys() {
   document.addEventListener('keydown', ev => {
@@ -332,6 +600,11 @@ function bindKeys() {
     if (ctrl && k === 'd') { ev.preventDefault(); duplicate(); return; }
     if (ctrl && k === 'a') { ev.preventDefault(); D.sel = new Set(els().map(e => e.id)); render(); props(); return; }
     if (k === 'escape') { setTool('select'); D.sel.clear(); render(); props(); return; }
+    const pmv = { arrowleft: [-1, 0], arrowright: [1, 0], arrowup: [0, -1], arrowdown: [0, 1] }[k];
+    if (D.tool === 'plan' && pmv && D.L.background && !D.L.background.locked) {
+      ev.preventDefault(); const st = ev.shiftKey ? 1 : 0.1;
+      change(() => { D.L.background.x = r2(D.L.background.x + pmv[0] * st); D.L.background.y = r2(D.L.background.y + pmv[1] * st); }); return;
+    }
     if (k === 'delete' || k === 'backspace') { ev.preventDefault(); remove(); return; }
     if (k === 'r' && !ctrl) { rotate(); return; }
     if (k === 'v') { setTool('select'); return; }

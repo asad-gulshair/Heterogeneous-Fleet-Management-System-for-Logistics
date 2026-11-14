@@ -54,7 +54,10 @@ traffic, A/B comparison, what-if) works on drawn layouts with no special cases.
 {
   "schema": "tuscore.layout/1",
   "name": "My DC", "width_m": 60, "height_m": 40, "grid_m": 1,
-  "background": null,
+  "background": {"id": "<sha>.png", "w_px": 1840, "h_px": 1300, "x": 0, "y": 0, "m_per_px": 0.05, "rot": 0,
+                 "opacity": 0.6, "invert": true, "locked": false, "show": true, "scaled": true},
+  "custom_robots": {"c_geek_p800": {"label": "Geek+ P800", "role": "carry_tote", "vendor": "Geek+", "adapter": "rest",
+                    "width_m": 0.8, "length_m": 0.8, "speed_mps": 1.5, "battery_kwh": 1.2, "cost_eur": 35000}},
   "elements": [
     {"id": "e1", "type": "rack", "x": 6, "y": 5, "w": 30, "h": 2, "name": "A1", "levels": 4},
     {"id": "e2", "type": "packing", "x": 4, "y": 32, "w": 6, "h": 4},
@@ -62,7 +65,7 @@ traffic, A/B comparison, what-if) works on drawn layouts with no special cases.
     {"id": "e4", "type": "wall", "x": 0, "y": 20, "w": 12, "h": 1},
     {"id": "e5", "type": "nogo", "x": 40, "y": 20, "w": 3, "h": 3}
   ],
-  "robots": {"tote_amr": 6, "scissor_lift": 3, "pallet_stacker": 2, "drone": 1},
+  "robots": {"tote_amr": 6, "scissor_lift": 3, "pallet_stacker": 2, "drone": 1, "c_geek_p800": 2},
   "orders": {"box_pick": 170, "high_pick": 45, "pallet_move": 24, "inventory_scan": 6}
 }
 ```
@@ -75,7 +78,9 @@ work in). Racks are horizontal (long side along x) or vertical; picking happens 
 | Problem | What we do |
 |---|---|
 | Floor plan scale wrong -> every distance wrong | Two-point scale tool, live scale bar and dimensions, warning if the site is implausibly large or small |
-| Huge / multi-page PDF, rotated scan | Render one page, downscale to <= 4096 px, rotate 90 deg, adjust opacity, lock background (Part 2) |
+| Huge / multi-page PDF, rotated scan | Render the chosen page at 150 dpi (max 7000 px), images max 8000 px; turn 90 deg or any angle, fade, dark mode, lock (done in Part 2) |
+| CAD file (DWG / DXF) uploaded | Rejected with the advice to export a PDF from the CAD tool |
+| Robot from another vendor | Custom robot type: job + size + speed + battery + price + protocol; checked by its own width (done in Part 2) |
 | Aisle too narrow for a robot type | Per-type corridor check (robot width + 0.15 m safety each side); rack faces a TL-65 cannot reach are reported and no high picks are generated there |
 | Rack with no reachable face | Error per rack; partly blocked racks only get orders at reachable bays |
 | Station enclosed by walls / unreachable | Reachability from the charging area per robot type; error with the station highlighted |

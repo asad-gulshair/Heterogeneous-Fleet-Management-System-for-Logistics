@@ -227,7 +227,7 @@ function renderPanel(force = false) {
 function rowHTML(r) {
   const t = S.MAP.types[r.type];
   return `<div class="rob ${r.id === S.sel ? 'sel' : ''}" data-id="${r.id}">
-    <div class="ic" style="background:${t.color}">${glyph(r.type)}</div>
+    <div class="ic" style="background:${t.color}">${glyph(r.model || r.type)}</div>
     <div style="min-width:0"><div class="nm">${nice(r.id)}</div><div class="meta">${r.action ? r.action : t.vendor + ' · ' + t.interface}</div></div>
     <div class="r"><span class="chip ${r.state}">${r.state.replace('_', ' ')}</span><div class="bar"><i style="width:${r.battery}%;background:${batColor(r.battery)}"></i></div></div></div>`;
 }
@@ -263,7 +263,7 @@ function panelInner(P) {
     const r = D.robots.find(x => x.id === S.sel), info = $('rdinfo');
     if (r && info) {
       const t = S.MAP.types[r.type];
-      info.innerHTML = `<h3><span class="ic" style="background:${t.color}">${glyph(r.type)}</span>${nice(r.id)}</h3>
+      info.innerHTML = `<h3><span class="ic" style="background:${t.color}">${glyph(r.model || r.type)}</span>${nice(r.id)}</h3>
       <div class="kv"><b>Type</b><span>${t.label}</span></div><div class="kv"><b>Vendor</b><span>${t.vendor}</span></div>
       <div class="kv"><b>Interface</b><span class="mono">${t.interface}</span></div><div class="kv"><b>State</b><span class="chip ${r.state}">${r.state.replace('_', ' ')}</span></div>
       <div class="kv"><b>Order</b><span>${r.task ? '#' + r.task : '—'}</span></div><div class="kv"><b>Action</b><span>${r.action || '—'}</span></div>

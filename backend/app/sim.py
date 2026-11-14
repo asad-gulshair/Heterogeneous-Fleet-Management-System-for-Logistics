@@ -168,7 +168,7 @@ class Simulation:
                 r = Robot(id=f"{tname}_{i}", rtype=tname, label=t["label"], vendor=t["vendor"],
                           interface=t["interface"], speed=t["speed"], flying=t["flying"],
                           capabilities=list(t["capabilities"]), kwh=t["battery_kwh"], cell=spots.pop(),
-                          priority=t.get("priority", 1))
+                          priority=t.get("priority", 1), model=t.get("model", tname))
                 self.robots[r.id] = r
                 if not r.flying:
                     self.traffic.claim(r.cell, r.id)

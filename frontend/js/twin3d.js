@@ -252,10 +252,10 @@ export class Twin3D {
 
   // ------------------------------------------------------------------ robots
   _makeRobot(r) {
-    const t = this.types[r.type], col = t.color, g = new THREE.Group(), p = { kind: r.type };
+    const t = this.types[r.type], col = t.color, g = new THREE.Group(), kind = r.model || r.type, p = { kind };   // custom types reuse a built-in model
     const bodyMat = std(col, { roughness: 0.42, metalness: 0.35 }), dark = std('#151c2c', { roughness: 0.7 });
     p.led = glow(STATE_COL.idle, 1.8);
-    if (r.type === 'tote_amr') {
+    if (kind === 'tote_amr') {
       g.add(box(0.84, 0.08, 0.66, dark, 0, 0.06, 0));
       g.add(box(0.78, 0.2, 0.6, bodyMat, 0, 0.18, 0));
       g.add(box(0.7, 0.03, 0.52, std('#2a3550'), 0, 0.295, 0));
@@ -268,7 +268,7 @@ export class Twin3D {
       p.load = box(0.42, 0.26, 0.34, std('#b98c5a', { metalness: 0, roughness: 0.9 }), 0, 0.48, 0);
       p.binTop = 0.62;
       p.hd = this._makeHandler();
-    } else if (r.type === 'scissor_lift') {
+    } else if (kind === 'scissor_lift') {
       g.add(box(0.9, 0.08, 0.74, dark, 0, 0.06, 0));
       g.add(box(0.86, 0.24, 0.7, bodyMat, 0, 0.2, 0));
       for (const z of [-0.2, 0.2]) g.add(box(0.02, 0.05, 0.12, p.led, 0.435, 0.2, z, false));
@@ -285,7 +285,7 @@ export class Twin3D {
       p.platform.add(box(0.035, 0.035, 0.7, rail, -0.4, 0.5, 0));
       p.load = box(0.5, 0.32, 0.4, std('#b98c5a', { metalness: 0, roughness: 0.9 }), 0, 0.19, 0); p.platform.add(p.load);
       g.add(p.platform); p.lift = 0.34;
-    } else if (r.type === 'pallet_stacker') {
+    } else if (kind === 'pallet_stacker') {
       g.add(box(0.66, 0.85, 0.74, bodyMat, -0.28, 0.5, 0));
       g.add(box(0.68, 0.12, 0.76, std('#f5c542'), -0.28, 0.82, 0));
       g.add(box(0.3, 0.35, 0.5, std('#1b2438'), -0.35, 1.1, 0));
@@ -322,7 +322,7 @@ export class Twin3D {
     // beacon (fault / blocked), selection ring
     p.beaconMat = glow('#ff5d6c', 2);
     p.beacon = new THREE.Mesh(new THREE.SphereGeometry(0.09, 16, 12), p.beaconMat);
-    p.beacon.position.y = r.type === 'pallet_stacker' ? 2.25 : r.type === 'drone' ? 0.25 : 0.45; p.beacon.visible = false;
+    p.beacon.position.y = kind === 'pallet_stacker' ? 2.25 : kind === 'drone' ? 0.25 : 0.45; p.beacon.visible = false;
     (p.body || g).add(p.beacon);
     p.ring = new THREE.Mesh(new THREE.RingGeometry(0.62, 0.74, 40), new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.9, depthWrite: false }));
     p.ring.rotation.x = -Math.PI / 2; p.ring.position.y = 0.025; p.ring.visible = false; this.scene.add(p.ring);
@@ -337,7 +337,7 @@ export class Twin3D {
     g.position.set(r.x + 0.5, 0, r.y + 0.5);
     this.scene.add(g);
     // floating vendor marker - readable above the racks from any angle
-    p.pinTex = { normal: this._pinTexture(col, LETTER[r.type] || '?'), fault: this._pinTexture('#ff5d6c', '!') };
+    p.pinTex = { normal: this._pinTexture(col, LETTER[r.type] || (t.label || '?')[0].toUpperCase()), fault: this._pinTexture('#ff5d6c', '!') };
     p.pin = new THREE.Sprite(new THREE.SpriteMaterial({ map: p.pinTex.normal, depthTest: false, transparent: true }));
     p.pin.scale.set(1.05, 1.05, 1); p.pin.renderOrder = 10; p.pin.userData.rid = r.id; this.scene.add(p.pin);
     p.stem = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 1, 0)]),
@@ -569,7 +569,7 @@ export class Twin3D {
       this._seq(wait, () => {}, () => this._slide(m, [b.pos, () => new THREE.Vector3(rec.pos.x, Math.max(b.pos.y, this._platPos(rec).y + b.size[1] / 2), rec.pos.z), () => this._platPos(rec).setY(this._platPos(rec).y - 0.25 * VIS + 0.03 + b.size[1] / 2 + 0.05)],
         Math.max(0.6, d * 0.45), () => { this.scene.remove(m); this._cargoLoad(rec, cargo); rec.p.pending = false; }));
     } else if (startWork && r.action === 'hand over') {               // lift -> tote AMR of the same order: slide across, then down into the bin
-      const mate = [...this.robots.values()].find(o => o !== rec && o.data.task === r.task && o.data.type === 'tote_amr');
+      const mate = [...this.robots.values()].find(o => o !== rec && o.data.task === r.task && (o.data.model || o.data.type) === 'tote_amr');
       if (!mate) return;
       const cargo = rec.p.cargo || { col: '#b98c5a', size: [0.42, 0.26, 0.34] };
       rec.p.hideLoad = true; mate.p.pending = true; rec.p.cargo = null;
@@ -593,7 +593,7 @@ export class Twin3D {
       this._dropTote(rec);
     }
     // pallets: picked up -> gone from the floor; set down at the dock -> stays there until the truck takes it
-    if (r.type === 'pallet_stacker') {
+    if ((r.model || r.type) === 'pallet_stacker') {
       if (!prev.load && r.load === 'pallet' && prev.task) this.lifted.add(prev.task);
       if (prev.load === 'pallet' && !r.load && prev.action === 'set down at dock') this._dockPallet(this._forkTip(rec));
     }
@@ -805,7 +805,7 @@ export class Twin3D {
   _tag() {
     const rec = this.selected && this.robots.get(this.selected);
     if (!rec) { this.tag.style.display = 'none'; return; }
-    const r = rec.data, h = r.type === 'drone' ? rec.p.alt * VIS + 2.2 : 6.3;
+    const r = rec.data, h = (r.model || r.type) === 'drone' ? rec.p.alt * VIS + 2.2 : 6.3;
     const v = new THREE.Vector3(rec.pos.x, h, rec.pos.z).project(this.camera);
     if (v.z > 1) { this.tag.style.display = 'none'; return; }
     const w = this.el.clientWidth, hh = this.el.clientHeight;

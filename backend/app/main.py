@@ -13,8 +13,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import PlainTextResponse
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -281,8 +281,62 @@ async def layouts():
 # ---------------------------------------------------------------- layout designer
 @app.get("/api/catalog", tags=["designer"], summary="Element types and robot catalog for the designer")
 async def get_catalog():
-    """Element types (rack, wall, no-go, packing, dock, pallet area, charging) and robot types with footprint and price."""
-    return layout_mod.catalog()
+    """Element types (rack, wall, no-go, packing, dock, pallet area, charging), robot types with footprint and price,
+    the jobs a custom robot can do, the vendor protocols, and the saved custom robot library."""
+    return layout_mod.catalog(designs.robot_library())
+
+
+@app.get("/api/robot-types", tags=["designer"], summary="Saved custom robot types")
+async def list_robot_types():
+    return designs.robot_library()
+
+
+@app.put("/api/robot-types/{key}", tags=["designer"], summary="Save a custom robot type to the library")
+async def put_robot_type(key: str, body: Dict[str, Any]):
+    """{label, role: carry_tote|high_pick|move_pallet|scan, vendor, adapter, width_m, length_m, speed_mps, battery_kwh,
+    cost_eur, color}. The robot is planned exactly like the built-in robot that does the same job."""
+    if not layout_mod.CUSTOM_KEY.match(key):
+        raise HTTPException(400, "key must look like c_my_robot")
+    d = layout_mod.clean_robot(body)
+    if not d:
+        raise HTTPException(422, "role must be one of " + ", ".join(layout_mod.ROLES))
+    designs.save_robot(key, d)
+    return {"key": key, "robot": d}
+
+
+@app.delete("/api/robot-types/{key}", tags=["designer"], summary="Remove a custom robot type from the library")
+async def delete_robot_type(key: str):
+    """Layouts that already use it keep their own copy, so their saved versions still run."""
+    return designs.delete_robot(key)
+
+
+@app.post("/api/backgrounds", tags=["designer"], status_code=201, summary="Upload a floor plan (image or PDF)")
+async def upload_background(request: Request, name: str = "", page: int = 1):
+    """Send the file as the raw request body. PNG, JPG, WEBP, BMP, TIFF, GIF or PDF (one page is rendered at 150 dpi).
+    Returns {id, w_px, h_px, pages, page, source}; put it in layout.background and set the scale in the designer."""
+    data = await request.body()
+    try:
+        return designs.save_background(data, name, page)
+    except designs.UploadError as e:
+        raise HTTPException(415, str(e))
+
+
+@app.post("/api/backgrounds/pdf/{source}/page/{page}", tags=["designer"], summary="Use another page of an uploaded PDF")
+async def background_page(source: str, page: int, name: str = ""):
+    try:
+        return designs.background_page(source, page, name)
+    except KeyError:
+        raise HTTPException(404, "unknown PDF")
+    except designs.UploadError as e:
+        raise HTTPException(422, str(e))
+
+
+@app.get("/api/backgrounds/{bid}", tags=["designer"], summary="Floor plan image")
+async def get_background(bid: str):
+    try:
+        return FileResponse(designs.background_file(bid), headers={"Cache-Control": "public, max-age=31536000, immutable"})
+    except KeyError:
+        raise HTTPException(404, "unknown floor plan")
 
 
 @app.get("/api/designs", tags=["designer"], summary="Saved layouts and example templates")

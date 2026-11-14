@@ -135,7 +135,7 @@ function buildWhatIf() {
   $('wiRobots').onclick = e => { const b = e.target.closest('[data-step]'); if (!b) return; const i = $('wi_' + b.dataset.step); i.value = Math.max(1, +i.value + +b.dataset.d); };
   $('wiBays').value = (S.MAP.chargers || []).length;
   $('wiLayout').innerHTML = (S.layouts || []).map(l => `<option value="${l.file}" ${l.active ? 'selected' : ''}>${l.name}</option>`).join('');
-  $('roiInputs').innerHTML = Object.entries(T).map(([k, t]) => `<div class="field"><label>${t.label.split(' (')[0]} unit cost</label><input id="cost_${k}" type="number" step="1000" value="${COST[k] ?? 30000}"></div>`).join('') +
+  $('roiInputs').innerHTML = Object.entries(T).map(([k, t]) => `<div class="field"><label>${t.label.split(' (')[0]} unit cost</label><input id="cost_${k}" type="number" step="1000" value="${t.cost_eur ?? COST[k] ?? 30000}"></div>`).join('') +
     `<div class="field"><label>Value per extra order</label><input id="roi_val" type="number" step="0.1" value="1.5"></div>
      <div class="field"><label>Value per hour of robot time</label><input id="roi_hr" type="number" step="1" value="12"></div>
      <div class="field"><label>Shifts per year</label><input id="roi_shifts" type="number" value="500"></div>
@@ -218,7 +218,7 @@ function renderOverview() {
     const kinds = new Set((t.capabilities || []).flatMap(c => CAP_KINDS[c] || []));
     const jobs = [...kinds].reduce((a, kk) => a + (k.by_kind[kk] || 0), 0);
     const bat = mine.length ? Math.round(mine.reduce((a, r) => a + r.battery, 0) / mine.length) : 0;
-    return `<div class="vcard" style="--vc:${t.color}"><div class="vh"><span class="ic" style="background:${t.color}">${glyph(v.id)}</span><div><b>${v.vendor}</b><small>${t.label} · ${v.protocol}</small></div>
+    return `<div class="vcard" style="--vc:${t.color}"><div class="vh"><span class="ic" style="background:${t.color}">${glyph(t.model || v.id)}</span><div><b>${v.vendor}</b><small>${t.label} · ${v.protocol}</small></div>
       <span class="on-dot ${v.online ? '' : 'off'}" style="margin-left:auto"><i></i>${v.online ? 'Online' : 'Offline'}</span></div>
       <div class="big">${g.busy}<small> of ${mine.length} working now</small></div>
       <div class="stack">${Object.entries(g).map(([kk, n]) => n ? `<i style="width:${100 * n / Math.max(1, mine.length)}%;background:${GROUP_COL[kk]}"></i>` : '').join('')}</div>

@@ -117,4 +117,21 @@ Plan and research: `docs/TASK2_PLAN.md`.
 - Tests: 23 (10 new): every example runs with 0 collisions / 0 deadlocks, the redrawn Task 1 site gives the Task 1
   result exactly, every check rule, the API save / version / apply flow.
 
-Next (part 2): floor plan image / PDF as background with two-point scale, custom robot types, user-guide page.
+## Task 2 - Step 1, part 2: floor plan, custom robots, user guide
+- **Floor plan underlay**: upload a PDF, PNG, JPG, WEBP, BMP, TIFF or GIF (button or drag-and-drop). A PDF is rendered on the
+  server at 150 dpi (pypdfium2) with page choice. Files are stored by content hash in `data/backgrounds/` and saved with the layout.
+- **Two-point scale**: click two points (Shift = straight), type the real distance; the plan rescales around the
+  first point. Floor = plan sizes the floor (and moves the drawing with it); auto after the first scale on an empty floor.
+  Move plan (drag / arrows 10 cm), turn 90°, free angle, fade, dark mode for paper plans, lock, show / hide, replace, remove.
+  All of it is in undo / redo and saved in every version. The plan is only a tracing guide; the simulation never reads it.
+- **Custom robot types**: name, job (tote carrier, high-shelf picker, pallet mover, flying scanner), vendor, protocol
+  (VDA 5050 / REST / TCP-JSON / MAVLink), width, length, speed, battery, price, colour. Compiled as the built-in robot of that
+  job with the new numbers, so allocation, traffic and the vendor adapters need no change. Checks use the widest robot of
+  each job in the fleet. Robot library (`data/robots.json`, `/api/robot-types`) to reuse types; each layout keeps its own
+  copy so old versions always run the same. The 3D / 2D twin draws a custom robot like the built-in robot of its job, in its colour.
+- **Sample plan**: `config/plans/sample-floor-plan.pdf` (+ PNG), 80 x 50 m hall with an 80.00 m dimension line.
+- **User guide**: `docs/USER_GUIDE.md`.
+- Tests: 27 (4 new): custom robot compiles, runs and is checked by its width; bad values clamped; PNG / PDF upload and
+  page switch; DWG rejected with advice; path traversal blocked; the plan never changes the compiled map; robot library API.
+
+Next (Step 2): waypoint / lane map, traffic zones, missions, WMS API + mock WMS, database with shift replay, login, alarms.

@@ -147,3 +147,69 @@ def test_api_save_versions_check_and_apply():
     bad["elements"] = [e for e in bad["elements"] if e["type"] != "charging"]
     bid = c.post("/api/designs", json={"layout": bad}).json()["id"]
     assert c.post(f"/api/designs/{bid}/apply", json={}).status_code == 422
+
+
+# ---------------------------------------------------------------- Part 2: custom robot types, floor plans
+def test_custom_robot_type_runs_and_is_checked_by_its_size():
+    L = small(tote_amr=0, scissor_lift=0, pallet_stacker=0, drone=0)
+    L["custom_robots"] = {"c_p800": {"label": "Geek+ P800", "role": "carry_tote", "vendor": "Geek+", "adapter": "rest",
+                                     "width_m": 0.8, "speed_mps": 1.5, "cost_eur": 41000}}
+    L["robots"]["c_p800"] = 3
+    rep = check_layout(L)
+    assert rep["ok"], rep["problems"]
+    t = rep["config"]["robot_types"]["c_p800"]
+    assert t["capabilities"] == ["carry_tote"] and t["adapter"] == "rest" and t["model"] == "tote_amr" and t["speed"] == 1.5
+    k = run(L, hours=1)
+    assert k["completed"] > 30 and k["collisions"] == 0
+    # the same robot 1.9 m wide does not fit the 2 m aisle between the racks (outer sides walled off)
+    L["custom_robots"]["c_p800"]["width_m"] = 1.9
+    L["elements"] += [{"id": "w1", "type": "wall", "x": 3, "y": 2, "w": 18, "h": 1},
+                      {"id": "w2", "type": "wall", "x": 3, "y": 9, "w": 18, "h": 1}]
+    rep = check_layout(L)
+    assert "aisle_tote" in codes(rep) and not rep["ok"]
+
+
+def test_custom_robot_values_are_clamped_and_bad_ones_dropped():
+    L = normalise({"custom_robots": {"c_x": {"role": "move_pallet", "width_m": 99, "speed_mps": -3},
+                                     "c_bad": {"role": "teleport"}, "tote_amr": {"role": "scan"}},
+                   "robots": {"c_x": 2, "c_bad": 4}})
+    assert set(L["custom_robots"]) == {"c_x"} and L["robots"]["c_x"] == 2 and "c_bad" not in L["robots"]
+    assert L["custom_robots"]["c_x"]["width_m"] == 3.0 and L["custom_robots"]["c_x"]["speed_mps"] == 0.1
+
+
+def test_floor_plan_upload_png_and_pdf_pages():
+    import io
+    from PIL import Image
+    from fastapi.testclient import TestClient
+    from app import main
+    c = TestClient(main.app)
+    im = Image.new("RGB", (800, 500), "white")
+    b = io.BytesIO(); im.save(b, "PNG")
+    r = c.post("/api/backgrounds?name=plan.png", content=b.getvalue())
+    assert r.status_code == 201 and r.json()["w_px"] == 800 and r.json()["id"].endswith(".png")
+    assert c.get("/api/backgrounds/" + r.json()["id"]).status_code == 200
+    b = io.BytesIO(); im.save(b, "PDF", save_all=True, append_images=[im.rotate(90, expand=True)], resolution=72)
+    j = c.post("/api/backgrounds?name=plan.pdf", content=b.getvalue()).json()
+    assert j["pages"] == 2 and j["page"] == 1
+    j2 = c.post(f"/api/backgrounds/pdf/{j['source']}/page/2").json()
+    assert (j2["w_px"], j2["h_px"]) == (j["h_px"], j["w_px"])
+    assert c.post("/api/backgrounds?name=x.dwg", content=b"AC1027 not an image").status_code == 415
+    assert c.get("/api/backgrounds/../../etc/passwd").status_code == 404
+    # the plan travels with the layout and never changes the simulation
+    L = small()
+    L["background"] = {"id": j["id"], "w_px": j["w_px"], "h_px": j["h_px"], "m_per_px": 0.05, "x": 1, "y": 2}
+    assert normalise(L)["background"]["id"] == j["id"]
+    a, b = compile_layout(L)[0], compile_layout(small())[0]
+    assert a["shelves"] == b["shelves"] and a["zones"] == b["zones"] and a["walls"] == b["walls"]
+    assert normalise({"background": {"id": "../evil.png"}})["background"] is None
+
+
+def test_robot_library_api():
+    from fastapi.testclient import TestClient
+    from app import main
+    c = TestClient(main.app)
+    assert c.put("/api/robot-types/c_fast", json={"label": "Fast", "role": "carry_tote", "speed_mps": 2}).status_code == 200
+    assert "c_fast" in c.get("/api/catalog").json()["library"]
+    assert c.put("/api/robot-types/c_fast", json={"role": "fly"}).status_code == 422
+    assert c.put("/api/robot-types/Bad Key", json={"role": "scan"}).status_code == 400
+    assert "c_fast" not in c.delete("/api/robot-types/c_fast").json()

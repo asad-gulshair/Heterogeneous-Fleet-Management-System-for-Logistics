@@ -52,16 +52,28 @@
       </div>
       <div class="dz">
         <aside class="dz-left card">
+          <div class="dz-h">Floor plan</div>
+          <div id="dzPlan"></div>
+          <input type="file" id="dzFile" accept=".pdf,.png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff,.gif,application/pdf,image/*" hidden>
           <div class="dz-h">Draw</div>
           <div class="dz-tools" id="dzTools"></div>
           <div class="dz-h">Robots</div>
           <div id="dzRobots"></div>
+          <div class="dz-addrob"><button class="btn sm" id="dzNewRobot" title="Define a robot from another vendor: its job, size, speed, battery, price and protocol">+ Robot type</button>
+            <select id="dzLib" title="Add a robot type you saved before"></select></div>
           <div class="dz-h">Orders per hour</div>
           <div id="dzOrders" class="dz-orders"></div>
         </aside>
         <div class="dz-canvas card" id="dzWrap">
           <svg id="dzSvg" tabindex="0"></svg>
           <div class="dz-status" id="dzStatus"></div>
+          <div class="dz-scalebox" id="dzScaleBox" hidden>
+            <b>Real distance between the two points</b>
+            <div class="row"><input id="dzScaleM" type="number" min="0.1" step="0.01" placeholder="e.g. 24.5"><span>m</span>
+              <button class="btn sm primary" id="dzScaleOk">Set scale</button><button class="btn sm" id="dzScaleNo">Cancel</button></div>
+            <small id="dzScaleNow"></small>
+          </div>
+          <div class="dz-drop" id="dzDrop">Drop the floor plan here (PDF, PNG or JPG)</div>
           <div class="dz-help" id="dzHelp">Pick an element on the left and drag on the floor to draw it · drag to move · handles to resize ·
             <b>R</b> rotate · <b>Ctrl+D</b> duplicate · <b>Del</b> delete · arrows nudge 1 m · wheel to zoom · drag empty floor to pan</div>
         </div>
@@ -72,6 +84,27 @@
           <div class="card"><div class="hd"><h2>This layout</h2></div><div class="bd" id="dzStats"></div></div>
         </aside>
       </div>
+      <dialog class="dz-dlg" id="dzRobotDlg">
+        <form method="dialog" id="dzRobotForm">
+          <h3 id="dzRobotTitle">New robot type</h3>
+          <p class="hint">Any robot from any vendor. Pick the job it does; TusCore plans it like the built-in robot for that job, with your size, speed and battery.</p>
+          <div class="dz-props">
+            <div class="field full"><label>Name</label><input name="label" required maxlength="40" placeholder="e.g. Geek+ P800"></div>
+            <div class="field full"><label>Job</label><select name="role"></select></div>
+            <div class="field"><label>Vendor</label><input name="vendor" maxlength="40" placeholder="e.g. Geek+"></div>
+            <div class="field"><label>Protocol</label><select name="adapter"></select></div>
+            <div class="field"><label>Width (m)</label><input name="width_m" type="number" step="0.05"></div>
+            <div class="field"><label>Length (m)</label><input name="length_m" type="number" step="0.05"></div>
+            <div class="field"><label>Speed (m/s)</label><input name="speed_mps" type="number" step="0.1"></div>
+            <div class="field"><label>Battery (kWh)</label><input name="battery_kwh" type="number" step="0.1"></div>
+            <div class="field"><label>Price (EUR)</label><input name="cost_eur" type="number" step="1000"></div>
+            <div class="field"><label>Colour</label><input name="color" type="color" value="#a78bfa"></div>
+          </div>
+          <p class="hint" id="dzRobotNeed"></p>
+          <label class="dz-check"><input type="checkbox" name="lib" checked> Also save to my robot library (use it in other layouts)</label>
+          <div class="dz-acts"><span class="spacer"></span><button class="btn sm" value="cancel" formnovalidate>Cancel</button><button class="btn sm primary" value="ok" id="dzRobotOk">Save robot type</button></div>
+        </form>
+      </dialog>
     </section>
 
     <!-- ================= LIVE OPERATIONS ================= -->

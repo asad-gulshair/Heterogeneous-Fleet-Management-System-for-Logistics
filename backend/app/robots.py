@@ -43,6 +43,7 @@ class Robot:
     # --- statistics ---
     busy_time: float = 0.0
     energy_kwh: float = 0.0
+    model: str = ""                            # look-alike for the 3D/2D view (custom types reuse a built-in model)
 
     @property
     def pos(self) -> tuple[float, float]:
@@ -71,7 +72,7 @@ class Robot:
     def to_dict(self) -> dict:
         x, y = self.pos
         return {
-            "id": self.id, "type": self.rtype, "label": self.label,
+            "id": self.id, "type": self.rtype, "model": self.model or self.rtype, "label": self.label,
             "vendor": self.vendor, "interface": self.interface,
             "x": round(x, 3), "y": round(y, 3),
             "battery": round(self.battery, 1), "state": self.state,

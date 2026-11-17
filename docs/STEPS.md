@@ -134,4 +134,61 @@ Plan and research: `docs/TASK2_PLAN.md`.
 - Tests: 27 (4 new): custom robot compiles, runs and is checked by its width; bad values clamped; PNG / PDF upload and
   page switch; DWG rejected with advice; path traversal blocked; the plan never changes the compiled map; robot library API.
 
-Next (Step 2): waypoint / lane map, traffic zones, missions, WMS API + mock WMS, database with shift replay, login, alarms.
+## Task 2 - Step 2, part 1: lane map and traffic rules
+- **Traffic layer** in the layout (`traffic_rules:` in the compiled config): one-way lanes (E / W / N / S, crossing allowed,
+  crossing lanes of both axes work), one-robot zones (intersections, doors, narrow passages), slow zones (max m/s),
+  named waypoints (mission stops for part 2). Drawn, moved, rotated (the arrow turns too) and edited like other elements.
+- **Planner**: a move against a one-way lane is never planned (hard rule, ground robots); slow zones cost the time they
+  take, so routes avoid them when a reasonable way around exists. Detours, sidesteps and make-way moves obey lanes too.
+- **Movement**: slow zones cap the speed; a robot enters a one-robot zone only when nobody is inside or driving in
+  (stateless check on cell reservations, so a zone can never be left locked). Waiting counts as traffic delay and is
+  reported as `zone_wait_min`; waits form wait-for edges, so the existing deadlock resolution covers zones too.
+- **Reachability with lanes**: a cell counts as reachable only if a robot can drive there and back to the charging area
+  (forward and backward search). Rack bays, stations and hand-over cells follow it; in a one-way aisle the hand-over
+  partner waits upstream.
+- **Checks**: lane into a dead end, lanes that trap a station, opposite overlapping lanes, lane on a rack / wall,
+  one-robot zone over chargers or work areas, waypoint unreachable or on a rack.
+- **Traffic assistant** (`POST /api/designs/suggest-traffic`, Suggest traffic button): 1 m aisles open at both ends
+  become one-way lanes in alternating directions (snake), door gaps of 1-3 m become one-robot zones; a suggestion is kept
+  only if it adds no error. L-shaped example: 2 lanes + 1 door zone.
+- **Twin**: 2D and 3D draw lanes with arrows, one-robot zones with a yellow / black safety border, slow zones with the limit,
+  waypoints as pins.
+- **Fixed on the way**: when a rack's preferred face is a narrow aisle but the other face is wide, high picks now use the
+  wide face (`lift_bays` with the face); before, the TL-65 could be sent into a 1 m aisle.
+- Verified: L-shaped site + suggested traffic + a slow zone, seeds 1-4, both modes, 2 h: 0 collisions, 0 permanent
+  deadlocks, 0 wrong-way moves, never two robots in a one-robot zone, never faster than a slow zone allows.
+  Rules cost cycle time (e.g. 104.8 -> 113.5 s), which the twin now shows.
+- Tests: 33 (6 new).
+
+## Task 2 - Step 2, parts 2 and 3: missions, WMS, database, replay, login, alarms
+- **Order priorities** (low / normal / high / urgent): queue order and Hungarian cost (one level = 5 min of waiting);
+  default priority leaves every earlier result identical (Task 1 seed 3, 2 h: 528 orders, 128.1 s - unchanged).
+- **Order lifecycle hooks** in the simulation (created / started / requeued / leg / done / cancelled) - the WMS gateway,
+  missions and the recorder all listen to the same events. **Cancel** for queued and running orders (robots stop and are freed).
+  Orders can be bound to a robot type or one robot (`require`), respected by both allocators.
+- **Missions** (`app/missions.py`, Missions page): multi-step jobs - go, load, unload, lift, set down, scan, wait -
+  to waypoints, zones, rack bays or x,y; robot by job, type or name; priority; run once, N times or until stopped,
+  every N minutes; pause / resume / stop / run now / delete; re-validated when the layout changes; stored in the database.
+- **WMS gateway** (`app/wms.py`, `/api/wms/*`, API page): order lines with the WMS's own ref (idempotent), types
+  box_pick / high_pick / pallet_move / inventory_scan / transport, location + destination, priority; statuses
+  queued / in_progress / done / cancelled / rejected with reasons and history; event feed for polling; webhooks with
+  retries (background thread); API key (X-API-Key) that reaches only the WMS endpoints. Works in both modes
+  (separate managers: the second leg keeps the WMS ref). High picks at a given bay use the side where the lift fits.
+- **Mock WMS**: built in (waves, ABC pick profile, 10 % express / 2 % urgent, scans low priority) and stand-alone over
+  HTTP (`backend/scripts/mock_wms.py`, standard library only).
+- **Database** (`app/store.py`, SQLite in WAL mode, `data/tuscore.db`): users, sessions, settings, shifts, replay
+  frames (1 per simulated second, zlib), events, orders, alarms, audit log, missions, WMS orders. The recorder
+  (`app/recorder.py`) buffers and writes every ~2 s; replay frames are kept for the last 30 shifts.
+- **History page**: recorded shifts, 2D replay with timeline, speed and play, events / alarms / orders synced to the
+  timeline (click to jump).
+- **Login** (`app/auth.py`): operator / admin, PBKDF2 passwords, HttpOnly session cookie (or Bearer token),
+  first-start passwords must be changed, 5 wrong passwords = 60 s lock, permissions checked for every API call and
+  the WebSocket, audit log of every change; Users dialog for admins. `TUSCORE_AUTH=off` for a demo without login.
+- **Alarms** (`app/alarms.py`): raised / acknowledged / cleared lifecycle (cleared-but-unseen stays until acknowledged),
+  levels critical / major / minor / info, one-off events (collision, deadlock), bell + drawer in the header, history.
+- **Fixed on the way**: the traffic-rule section of the compiled layout used the key `traffic`, which is also the
+  key of the traffic timing settings (block_s 0.5 s) - layouts with traffic rules fell back to 1.0 s. Now `traffic_rules`.
+- Docs: `docs/API.md` (auth, WMS integration, statuses, missions, alarms, replay), user guide sections 8-12.
+- Tests: 44 (11 new, `tests/test_step2.py`).
+
+Next (Step 3): robot count vs cost and payback, ROS 2 / Gazebo / Nav2 adapter, installer, documentation, video, report.

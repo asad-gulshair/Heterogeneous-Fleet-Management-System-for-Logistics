@@ -8,12 +8,20 @@ Blocking rules
   walls, no-go      block every robot, the drone included
 Zones carry a `type` (packing, pallet_area, dock, charging); hand-written configs may leave it out and
 the type is taken from the zone name (packing_1 -> packing, loading_dock -> dock ...).
+
+Traffic rules (optional `traffic_rules:` section, drawn in the Layout Designer)
+  lanes      one-way lanes: along the lane axis robots may only drive in `dir` (E, W, N, S); crossing is allowed
+  speed      slow zones: ground robots drive at most `max` m/s inside
+  single     one-robot zones (intersections, doors, narrow passages): only one ground robot inside at a time
+  waypoints  named points, used as mission stops
+The drone flies above all of this.
 """
 from __future__ import annotations
 from collections import deque
 
 ZONE_TYPES = ("packing", "pallet_area", "dock", "charging")
 FACES = {"h": ("S", "N"), "v": ("E", "W")}          # pick faces per rack orientation, preferred first
+DIRS = {"E": (1, 0), "W": (-1, 0), "S": (0, 1), "N": (0, -1)}
 N4 = ((1, 0), (-1, 0), (0, 1), (0, -1))
 
 
@@ -55,6 +63,33 @@ class Grid:
         for s in self.shelves:
             self.blocked.update(cells_of(s))
 
+        # traffic rules
+        tr = cfg.get("traffic_rules") or {}
+        self.lanes = tr.get("lanes", [])
+        self.slow_zones = tr.get("speed", [])
+        self.single_zones = tr.get("single", [])
+        self.ow_h: dict = {}            # cell -> +1 / -1 allowed x direction
+        self.ow_v: dict = {}            # cell -> +1 / -1 allowed y direction
+        for ln in self.lanes:
+            dx, dy = DIRS.get(ln.get("dir", "E"), (1, 0))
+            for c in cells_of(ln):
+                if dx:
+                    self.ow_h[c] = dx
+                else:
+                    self.ow_v[c] = dy
+        self.slow: dict = {}            # cell -> max speed (m/s)
+        for z in self.slow_zones:
+            for c in cells_of(z):
+                self.slow[c] = min(self.slow.get(c, 99.0), float(z.get("max", 0.5)))
+        self.mutex: dict = {}           # cell -> index of its one-robot zone
+        self.mutex_cells: list = []
+        for i, z in enumerate(self.single_zones):
+            cs = [c for c in cells_of(z) if self.in_bounds(*c)]
+            self.mutex_cells.append(cs)
+            for c in cs:
+                self.mutex[c] = i
+        self.waypoints = {k: tuple(v) for k, v in (tr.get("waypoints") or {}).items()}
+
         # Charger bays: in each charging zone one row along its bottom edge, every second cell (then further rows).
         self.chargers: list[tuple[int, int]] = []
         cand = []
@@ -73,7 +108,9 @@ class Grid:
             self.chargers = order[:max(1, min(n, len(order)))] if order else []
 
         # Ground cells reachable from the charging area (robots start there). Used to drop unreachable pick faces.
-        self.reach = self._reachable()
+        # With one-way lanes a cell only counts if a robot can drive there AND back to the charging area.
+        self.reach_any = self._reachable()
+        self.reach = self._reachable_both_ways() if self.has_rules else self.reach_any
 
         # Rack faces: for every rack the list of (bay, face) robots can stand at.
         self.faces: list[list[tuple[int, str]]] = []
@@ -100,6 +137,7 @@ class Grid:
             self.aisles.append(cells)
         self.closed: set = set()        # cells closed for maintenance (very expensive for A*, never a work site)
 
+
     # ------------------------------------------------------------ geometry helpers
     def in_bounds(self, x: int, y: int) -> bool:
         return 0 <= x < self.width and 0 <= y < self.height
@@ -109,6 +147,25 @@ class Grid:
         if not self.in_bounds(x, y) or (x, y) in self.hard:
             return False
         return flying or (x, y) not in self.blocked
+
+    def can_move(self, a, b) -> bool:
+        """One-way lanes: a move along a lane's axis must go the lane's way (in the cell left and the cell entered)."""
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        if dx:
+            for c in (a, b):
+                d = self.ow_h.get(c)
+                if d is not None and d != dx:
+                    return False
+        else:
+            for c in (a, b):
+                d = self.ow_v.get(c)
+                if d is not None and d != dy:
+                    return False
+        return True
+
+    @property
+    def has_rules(self) -> bool:
+        return bool(self.ow_h or self.ow_v)
 
     def zones_of(self, t: str) -> list[str]:
         return sorted(k for k, v in self.ztype.items() if v == t)
@@ -136,6 +193,8 @@ class Grid:
         a, b = self._face_cells(s, bay, face)
         if b not in self.reach:
             alt = [n for n in ((a[0] + dx, a[1] + dy) for dx, dy in N4) if n in self.reach and n != a]
+            if self.has_rules:          # one-way lane: the partner waits upstream, where it arrives from
+                alt.sort(key=lambda n: not (self.can_move(n, a) and not self.can_move(a, n)))
             b = alt[0] if alt else a
         return a, b
 
@@ -162,6 +221,26 @@ class Grid:
                     seen.add(n)
                     q.append(n)
         return seen
+
+    def _reachable_both_ways(self) -> set:
+        starts = sorted({c for n in self.zones_of("charging") for c in cells_of(self.zones[n]) if self.passable(*c)}) \
+            or sorted(self.reach_any)[:1]
+        fwd, q = set(starts), deque(starts)
+        while q:
+            c = q.popleft()
+            for dx, dy in N4:
+                n = (c[0] + dx, c[1] + dy)
+                if n not in fwd and self.passable(*n) and self.can_move(c, n):
+                    fwd.add(n); q.append(n)
+        back, q = set(starts), deque(starts)
+        while q:
+            c = q.popleft()
+            for dx, dy in N4:
+                p = (c[0] + dx, c[1] + dy)
+                if p not in back and self.passable(*p) and self.can_move(p, c):
+                    back.add(p); q.append(p)
+        self.reach_fwd, self.reach_back = fwd, back
+        return fwd & back
 
     def nearest_free(self, x: int, y: int, flying: bool = False):
         """BFS outward from (x,y) to the closest passable cell (used when a click lands on a shelf)."""
@@ -208,4 +287,6 @@ class Grid:
             "zones": {k: dict(z, type=self.ztype[k]) for k, z in self.zones.items()},
             "chargers": [list(c) for c in self.chargers],
             "aisles": [box(a) for a in self.aisles],
+            "traffic": {"lanes": self.lanes, "speed": self.slow_zones, "single": self.single_zones,
+                        "waypoints": {k: list(v) for k, v in self.waypoints.items()}},
         }

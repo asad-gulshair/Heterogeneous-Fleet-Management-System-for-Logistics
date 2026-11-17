@@ -5,7 +5,7 @@ import { OrbitControls } from '../vendor/OrbitControls.js';
 const RACK_H = 3.6, LEVELS = [0.12, 1.0, 1.9, 2.8], DRONE_ALT = 4.9, LIFT_TOP = 2.1, VIS = 1.35; // VIS: robots drawn 35% larger so they read at overview distance
 const LETTER = { tote_amr: 'T', scissor_lift: 'L', pallet_stacker: 'P', drone: 'D' };
 const STATE_COL = { idle: '#7f93b5', moving: '#6cc4ff', working: '#f5c76a', waiting: '#c9a7ff', to_charge: '#3ddc97', charging: '#3ddc97', fault: '#ff5d6c' };
-const KIND_COL = { box_pick: '#2E9FE8', high_pick: '#f5a524', pallet_move: '#e5484d', inventory_scan: '#46a758' };
+const KIND_COL = { box_pick: '#2E9FE8', high_pick: '#f5a524', pallet_move: '#e5484d', inventory_scan: '#46a758', mission: '#a78bfa', transport: '#38bdf8' };
 
 function rng(seed) { let s = seed >>> 0; return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296); }
 const std = (color, o = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.55, metalness: 0.25, ...o });
@@ -64,7 +64,7 @@ export class Twin3D {
     const fill = new THREE.DirectionalLight('#7fb5ff', 0.35); fill.position.set(this.cx + 30, 25, this.cz + 40); s.add(fill);
 
     this._buildFloor(); this._buildZones(); this._buildRacks(); this._buildPalletDecor(); this._buildPacking();
-    this._buildChargers(); this._buildWalls(); this._buildHeat();
+    this._buildChargers(); this._buildWalls(); this._buildTraffic(); this._buildHeat();
     this.view('overview');
 
     this.ray = new THREE.Raycaster(); this.ptr = new THREE.Vector2();
@@ -195,6 +195,50 @@ export class Twin3D {
       const pad = new THREE.Mesh(new THREE.PlaneGeometry(0.82, 0.82), padMat); pad.rotation.x = -Math.PI / 2; pad.position.set(x + 0.5, 0.015, y + 0.5); this.scene.add(pad);
       this.scene.add(box(0.26, 0.95, 0.2, postMat, x + 0.5, 0.475, y + 0.95));
       this.scene.add(box(0.2, 0.06, 0.02, lightMat, x + 0.5, 0.78, y + 0.84, false));
+    }
+  }
+
+  _buildTraffic() {                                      // floor markings: one-way lanes, slow zones, one-robot zones, waypoints
+    const T = this.map.traffic || {}, px = 32;
+    const decal = (r, y, draw) => {
+      const c = document.createElement('canvas'); c.width = Math.max(32, r.w * px); c.height = Math.max(32, r.h * px);
+      draw(c.getContext('2d'), c.width, c.height);
+      const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4;
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(r.w, r.h), new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }));
+      m.rotation.x = -Math.PI / 2; m.position.set(r.x + r.w / 2, y, r.y + r.h / 2); this.scene.add(m);
+    };
+    for (const z of T.speed || []) decal(z, 0.018, (g, w, h) => {
+      g.fillStyle = 'rgba(245,165,36,.10)'; g.fillRect(0, 0, w, h);
+      g.strokeStyle = '#f5a524'; g.lineWidth = 5; g.setLineDash([16, 10]); g.strokeRect(3, 3, w - 6, h - 6); g.setLineDash([]);
+      g.font = `800 ${Math.min(40, h * .3)}px Inter,sans-serif`; g.fillStyle = '#f5c46b'; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText(`SLOW ${z.max} m/s`, w / 2, h / 2);
+    });
+    for (const l of T.lanes || []) decal(l, 0.022, (g, w, h) => {
+      const [dx, dy] = { E: [1, 0], W: [-1, 0], S: [0, 1], N: [0, -1] }[l.dir || 'E'];
+      g.fillStyle = 'rgba(34,197,94,.16)'; g.fillRect(0, 0, w, h);
+      g.strokeStyle = 'rgba(34,197,94,.9)'; g.lineWidth = 4; g.setLineDash([14, 10]); g.strokeRect(2, 2, w - 4, h - 4); g.setLineDash([]);
+      g.strokeStyle = '#4ade80'; g.lineWidth = 6; g.lineCap = 'round'; g.lineJoin = 'round';
+      const along = dx ? l.w : l.h, across = dx ? l.h : l.w, k = px * .3;
+      for (let i = 1; i < along; i += 2) for (let j = 0; j < across; j++) {
+        const ax = (dx ? i : j + .5) * px, ay = (dx ? j + .5 : i) * px;
+        g.beginPath(); g.moveTo(ax - dx * k + dy * k, ay - dy * k + dx * k); g.lineTo(ax + dx * k, ay + dy * k); g.lineTo(ax - dx * k - dy * k, ay - dy * k - dx * k); g.stroke();
+      }
+    });
+    for (const z of T.single || []) {
+      decal(z, 0.026, (g, w, h) => {                   // yellow-black safety border, like painted intersection boxes
+        g.fillStyle = 'rgba(167,139,250,.14)'; g.fillRect(0, 0, w, h);
+        const b = 7; g.save(); g.beginPath(); g.rect(0, 0, w, h); g.rect(b, b, w - 2 * b, h - 2 * b); g.clip('evenodd');
+        g.fillStyle = '#f5c542'; g.fillRect(0, 0, w, h); g.fillStyle = '#111827';
+        for (let i = -h; i < w; i += 18) { g.beginPath(); g.moveTo(i, h); g.lineTo(i + 9, h); g.lineTo(i + 9 + h, 0); g.lineTo(i + h, 0); g.fill(); }
+        g.restore();
+        g.font = `800 ${Math.min(28, h * .28, w * .2)}px Inter,sans-serif`; g.fillStyle = '#d9ccff'; g.textAlign = 'center'; g.textBaseline = 'middle';
+        g.fillText((z.name || '1 robot').toUpperCase(), w / 2, h / 2);
+      });
+    }
+    for (const [name, [x, y]] of Object.entries(T.waypoints || {})) {
+      const pin = cyl(0.06, 0.06, 1.1, std('#38bdf8', { emissive: '#0b4a6b' })); pin.position.set(x + .5, .55, y + .5); this.scene.add(pin);
+      const head = cyl(0.22, 0.22, 0.06, glow('#38bdf8', 1.1)); head.position.set(x + .5, 1.12, y + .5); this.scene.add(head);
+      const lab = floorLabel(name, 2, '#bfe9ff'); lab.position.set(x + .5, 0.03, y + 1.3); this.scene.add(lab);
     }
   }
 

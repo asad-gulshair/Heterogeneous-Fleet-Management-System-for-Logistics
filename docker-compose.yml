@@ -17,6 +17,7 @@ services:
       MQTT_PORT: "1883"
     volumes:
       - ./results:/app/results      # comparison / what-if results survive restarts
+      - ./data:/app/data            # database (users, shift recordings, alarms), saved layouts, floor plans
     depends_on:
       - mosquitto
     restart: unless-stopped

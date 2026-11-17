@@ -14,12 +14,18 @@ from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from . import auth as auth_mod
 from . import designs
 from . import layout as layout_mod
+from .alarms import AlarmManager
+from .missions import MissionError, MissionManager
+from .recorder import Recorder
+from .store import Store
+from .wms import MockWms, WmsError, WmsGateway
 from .allocator import ALLOCATORS
 from .experiments import JobManager
 from .mqtt_bridge import MqttBridge
@@ -40,13 +46,33 @@ TICK = 0.1  # real seconds between simulation updates (10 Hz)
 
 mqtt = MqttBridge()
 jobs = JobManager(ROOT / "results")
+STORE = Store(designs.DATA / "tuscore.db")
+AUTH = auth_mod.Auth(STORE)
+ALARMS = AlarmManager(STORE)
+MISSIONS = MissionManager(STORE)
+GATEWAY = WmsGateway(STORE)
+MOCK_WMS = MockWms(GATEWAY)
+RECORDER = Recorder(STORE)
+ALARMS.sources.append(lambda s: [("mission_invalid", str(m["id"]), "minor", f"Mission '{m['name']}' cannot run", m["error"] or "")
+                                 for m in MISSIONS.items.values() if m["status"] == "invalid"])
 sim = Simulation(str(CONFIG))
 
 
+def _map_dict(s: Simulation) -> dict:
+    return {"name": s.cfg.get("name"), **s.grid.to_dict(), "types": s.types_meta(), "kinds": KINDS,
+            "dwell_s": s.cfg["orders"]["dwell_s"], "sla_s": s.sla_s,
+            "layout": Path(s.config_path).name, "mode": s.mode}
+
+
 def _wire(s: Simulation) -> Simulation:
-    """Attach the live simulation to the MQTT bridge."""
+    """Attach a new live simulation to MQTT, the recorder (database), alarms, missions and the WMS gateway."""
     s.publisher = mqtt.publish if mqtt.host else None
     s.bus.publisher = s.publisher
+    RECORDER.attach(s, Path(s.config_path).name, _map_dict(s))
+    ALARMS.attach(s)
+    MISSIONS.attach(s)
+    GATEWAY.attach(s)
+    MOCK_WMS.attach(s)
     return s
 
 
@@ -54,8 +80,15 @@ _wire(sim)
 
 
 async def sim_loop():
+    n, ended = 0, None
     while True:
         sim.tick(TICK)
+        n += 1
+        if n % 20 == 0:                                   # write the recording about every 2 s
+            done = sim.shift_over()
+            RECORDER.flush(final=done and ended is not sim)
+            if done:
+                ended = sim
         await asyncio.sleep(TICK)
 
 
@@ -90,6 +123,63 @@ class OrderIn(BaseModel):
     kind: Literal["box_pick", "high_pick", "pallet_move", "inventory_scan"]
     row: Optional[int] = Field(None, ge=0, description="Shelf row index (0 = A1). Random if omitted.")
     bay: Optional[int] = Field(None, ge=0, description="Bay number along the row (0-based). Random if omitted.")
+    priority: int = Field(1, ge=0, le=3, description="0 low, 1 normal, 2 high, 3 urgent")
+
+
+class LoginIn(BaseModel):
+    username: str
+    password: str
+
+
+class PasswordIn(BaseModel):
+    old: str
+    new: str
+
+
+class UserIn(BaseModel):
+    username: str
+    password: str
+    role: Literal["operator", "admin"] = "operator"
+
+
+class UserPatch(BaseModel):
+    role: Optional[Literal["operator", "admin"]] = None
+    active: Optional[bool] = None
+    password: Optional[str] = None
+
+
+class MissionIn(BaseModel):
+    """A multi-step mission. robot: {"role": "carry_tote"} | {"type": "tote_amr"} | {"robot": "tote_amr_3"}."""
+    model_config = {"extra": "allow"}
+    name: str = "Mission"
+    robot: Dict[str, str] = Field(default_factory=lambda: {"role": "carry_tote"})
+    steps: List[Dict[str, Any]] = Field(description='[{"to": "A3-05", "do": "load"}, {"to": "packing_1", "do": "unload"}]; '
+                                                    'do: go | load | unload | lift | set | scan | wait (wait_s)')
+    priority: Any = Field(1, description="low | normal | high | urgent or 0-3")
+    repeat: int = Field(1, ge=0, le=10000, description="runs; 0 = until stopped")
+    every_min: float = Field(0, ge=0, le=1440, description="minutes between run starts")
+    start: bool = True
+
+
+class WmsOrderIn(BaseModel):
+    """One order line from a WMS."""
+    model_config = {"extra": "allow"}
+    ref: str = Field(description="Your order reference (unique). Sending the same ref again returns the first order.")
+    type: Literal["box_pick", "high_pick", "pallet_move", "inventory_scan", "transport"]
+    location: Optional[str] = Field(None, description="Rack bay (A3-05), rack (A3) for a scan, or from-place for transport / pallets")
+    destination: Optional[str] = Field(None, description="Packing station, dock, waypoint or x,y")
+    priority: Any = Field("normal", description="low | normal | high | urgent")
+    load: Optional[Literal["tote", "pallet"]] = Field(None, description="transport only")
+
+
+class WebhookIn(BaseModel):
+    url: str
+
+
+class MockIn(BaseModel):
+    on: bool
+    wave_min: Optional[float] = Field(None, ge=1, le=60)
+    scale: Optional[float] = Field(None, ge=0.1, le=5)
 
 
 class AllocatorIn(BaseModel):
@@ -166,12 +256,44 @@ def _layout_path(name: Optional[str]) -> Path:
     return p
 
 
-def _new_sim(path: Path, mode: str) -> Simulation:
+def _new_sim(path: Path, mode: str, seed: Optional[int] = None, allocator: Optional[str] = None) -> Simulation:
     global sim
     scale, auto = sim.time_scale, sim.auto_orders
-    sim = _wire(Simulation(str(path), allocator=sim.allocator.name, mode=mode))
-    sim.time_scale, sim.auto_orders = scale, auto
+    new = Simulation(str(path), seed=seed, allocator=allocator or sim.allocator.name, mode=mode)
+    new.time_scale, new.auto_orders = scale, auto
+    sim = _wire(new)
     return sim
+
+
+def _user(request: Request) -> dict:
+    return getattr(request.state, "user", None) or auth_mod.LOCAL
+
+
+@app.middleware("http")
+async def guard(request: Request, call_next):
+    """Login and roles on every /api call; mutating calls are written to the audit log."""
+    need = auth_mod.required(request.method, request.url.path)
+    user = None
+    if need and auth_mod.ENABLED:
+        token = request.cookies.get(auth_mod.COOKIE)
+        h = request.headers.get("authorization", "")
+        if h.lower().startswith("bearer "):
+            token = h[7:]
+        user = AUTH.user(token)
+        if need == "wms" and user is None:
+            if not AUTH.wms_ok(request.headers.get("x-api-key")):
+                return JSONResponse({"detail": "API key (X-API-Key) or login required"}, status_code=401)
+            user = {"id": -1, "username": "wms", "role": "wms", "must_change": False}
+        elif user is None:
+            return JSONResponse({"detail": "login required"}, status_code=401)
+        elif need != "wms" and auth_mod.ROLES[user["role"]] < auth_mod.ROLES[need]:
+            return JSONResponse({"detail": f"{need} only"}, status_code=403)
+    request.state.user = user or auth_mod.LOCAL
+    resp = await call_next(request)
+    if (request.method not in ("GET", "HEAD", "OPTIONS") and request.url.path.startswith("/api/") and resp.status_code < 400
+            and not request.url.path.startswith(("/api/auth/", "/api/wms/orders", "/api/designs/check", "/api/designs/suggest"))):
+        STORE.audit(request.state.user["username"], f"{request.method} {request.url.path}")
+    return resp
 
 
 # ---------------------------------------------------------------- read
@@ -184,9 +306,7 @@ async def system():
 
 @app.get("/api/map", tags=["fleet"], summary="Warehouse map and robot types")
 async def get_map():
-    return {"name": sim.cfg.get("name"), **sim.grid.to_dict(), "types": sim.types_meta(), "kinds": KINDS,
-            "dwell_s": sim.cfg["orders"]["dwell_s"], "sla_s": sim.sla_s,
-            "layout": Path(sim.config_path).name, "mode": sim.mode}
+    return _map_dict(sim)
 
 
 @app.get("/api/fleet", tags=["fleet"], summary="Full live fleet snapshot")
@@ -384,6 +504,13 @@ async def check_design(body: LayoutDoc):
     return rep
 
 
+@app.post("/api/designs/suggest-traffic", tags=["designer"], summary="Suggest one-way lanes and door zones")
+async def suggest_traffic(body: LayoutDoc):
+    """Traffic assistant: 1 m aisles open at both ends become one-way lanes (neighbours in opposite directions),
+    door gaps in walls become one-robot zones. Only suggestions that add no errors are returned; nothing is saved."""
+    return layout_mod.suggest_traffic(body.model_dump())
+
+
 @app.post("/api/designs/{did}/apply", tags=["designer"], summary="Run a shift on a saved layout")
 async def apply_design(did: str, body: ApplyIn):
     """Compiles the layout to the simulation map and loads it into the live twin (the running shift is replaced)."""
@@ -403,7 +530,7 @@ async def apply_design(did: str, body: ApplyIn):
 @app.post("/api/orders", tags=["orders"], status_code=201, summary="Submit an order")
 async def create_order(body: OrderIn):
     """Submit an order (used by the console form and by other software, e.g. a WMS)."""
-    t = sim.add_order(body.kind, body.row, body.bay, manual=True)
+    t = sim.add_order(body.kind, body.row, body.bay, manual=True, priority=body.priority)
     return t.to_dict(sim.sim_time)
 
 
@@ -488,7 +615,8 @@ async def set_auto_orders(body: ToggleIn):
 
 @app.post("/api/sim/reset", tags=["simulation"], summary="Restart the shift")
 async def reset(body: ResetIn):
-    sim.reset(body.seed, body.allocator)
+    """Start a new shift on the same layout (a new recording in the database)."""
+    _new_sim(Path(sim.config_path), sim.mode, body.seed, body.allocator)
     return {"ok": True, "seed": sim.seed, "allocator": sim.allocator.name}
 
 
@@ -504,6 +632,254 @@ async def set_layout(body: LayoutIn):
     """Load another warehouse layout into the live twin."""
     _new_sim(_layout_path(body.name), sim.mode)
     return {"layout": Path(sim.config_path).name, "site": sim.cfg.get("name")}
+
+
+# ---------------------------------------------------------------- login, users, audit
+@app.post("/api/auth/login", tags=["auth"], summary="Log in")
+async def login(body: LoginIn):
+    """Sets an HttpOnly session cookie (also returned as `token` for scripts: Authorization: Bearer <token>)."""
+    try:
+        token, user = AUTH.login(body.username.strip(), body.password)
+    except PermissionError as e:
+        STORE.audit(body.username[:32], "login failed")
+        raise HTTPException(401, str(e))
+    STORE.audit(user["username"], "login")
+    resp = JSONResponse({"user": user, "token": token})
+    resp.set_cookie(auth_mod.COOKIE, token, max_age=auth_mod.SESSION_S, httponly=True, samesite="lax")
+    return resp
+
+
+@app.post("/api/auth/logout", tags=["auth"], summary="Log out")
+async def logout(request: Request):
+    AUTH.logout(request.cookies.get(auth_mod.COOKIE))
+    STORE.audit(_user(request)["username"], "logout")
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie(auth_mod.COOKIE)
+    return resp
+
+
+@app.get("/api/auth/me", tags=["auth"], summary="Who is logged in")
+async def me(request: Request):
+    if not auth_mod.ENABLED:
+        return {"user": auth_mod.LOCAL, "auth": False}
+    return {"user": AUTH.user(request.cookies.get(auth_mod.COOKIE)), "auth": True}     # user null = not logged in
+
+
+@app.post("/api/auth/password", tags=["auth"], summary="Change my password")
+async def change_password(body: PasswordIn, request: Request):
+    try:
+        AUTH.change_password(_user(request), body.old, body.new)
+    except (ValueError, IndexError) as e:
+        raise HTTPException(422, str(e))
+    STORE.audit(_user(request)["username"], "password changed")
+    return {"ok": True}
+
+
+@app.get("/api/users", tags=["auth"], summary="Users (admin)")
+async def list_users():
+    return AUTH.users()
+
+
+@app.post("/api/users", tags=["auth"], status_code=201, summary="Add a user (admin)")
+async def add_user(body: UserIn, request: Request):
+    try:
+        u = AUTH.create_user(body.username.strip(), body.password, body.role)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    STORE.audit(_user(request)["username"], "user created", f"{u['username']} ({u['role']})")
+    return u
+
+
+@app.patch("/api/users/{uid}", tags=["auth"], summary="Change a user's role, switch off, reset password (admin)")
+async def patch_user(uid: int, body: UserPatch, request: Request):
+    try:
+        AUTH.update_user(uid, body.role, body.active, body.password, by=_user(request))
+    except KeyError:
+        raise HTTPException(404, "unknown user")
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    STORE.audit(_user(request)["username"], "user changed", f"#{uid} {body.model_dump(exclude_none=True, exclude={'password'})}"
+                + (" password reset" if body.password else ""))
+    return {"ok": True}
+
+
+@app.get("/api/audit", tags=["auth"], summary="Audit log: who did what (admin)")
+async def audit(limit: int = 200):
+    return STORE.audit_log(min(1000, max(1, limit)))
+
+
+# ---------------------------------------------------------------- alarms
+@app.get("/api/alarms", tags=["alarms"], summary="Open alarms")
+async def alarms():
+    """Open alarms (active, or cleared but not yet acknowledged), most urgent first."""
+    return {"alarms": ALARMS.list(), "summary": ALARMS.summary()}
+
+
+@app.get("/api/alarms/history", tags=["alarms"], summary="Alarm history (all shifts)")
+async def alarm_history(limit: int = 200):
+    return STORE.alarm_history(min(2000, max(1, limit)))
+
+
+@app.post("/api/alarms/ack-all", tags=["alarms"], summary="Acknowledge all alarms")
+async def ack_all(request: Request):
+    return {"acked": ALARMS.ack_all(_user(request)["username"])}
+
+
+@app.post("/api/alarms/{aid}/ack", tags=["alarms"], summary="Acknowledge an alarm")
+async def ack(aid: int, request: Request):
+    if not ALARMS.ack(aid, _user(request)["username"]):
+        raise HTTPException(404, "no open alarm with this id")
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------- missions
+@app.get("/api/missions", tags=["missions"], summary="Mission templates and their runs")
+async def missions():
+    return MISSIONS.list()
+
+
+@app.get("/api/missions/targets", tags=["missions"], summary="Places a mission step can go to on this site")
+async def mission_targets():
+    return MISSIONS.targets.catalog()
+
+
+@app.post("/api/missions", tags=["missions"], status_code=201, summary="Create (and start) a mission")
+async def create_mission(body: MissionIn, request: Request):
+    """Multi-step job with a priority, run once or repeated. Each run is one fleet order."""
+    try:
+        return MISSIONS.create(body.model_dump(), _user(request)["username"])
+    except MissionError as e:
+        raise HTTPException(422, str(e))
+
+
+@app.post("/api/missions/{mid}/{action}", tags=["missions"], summary="pause | resume | stop | run_now")
+async def mission_action(mid: int, action: Literal["pause", "resume", "stop", "run_now"]):
+    if mid not in MISSIONS.items:
+        raise HTTPException(404, "unknown mission")
+    try:
+        return MISSIONS.set_status(mid, action)
+    except MissionError as e:
+        raise HTTPException(422, str(e))
+
+
+@app.delete("/api/missions/{mid}", tags=["missions"], summary="Delete a mission (cancels an open run)")
+async def delete_mission(mid: int):
+    if mid not in MISSIONS.items:
+        raise HTTPException(404, "unknown mission")
+    MISSIONS.delete(mid)
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------- WMS
+@app.post("/api/wms/orders", tags=["wms"], status_code=201, summary="WMS: submit an order line")
+async def wms_submit(body: WmsOrderIn):
+    """Idempotent by `ref`: the same ref again returns the existing order with HTTP 200.
+    Auth: header `X-API-Key` (see the API page) or a logged-in user."""
+    try:
+        o, created = GATEWAY.submit(body.model_dump(exclude_none=True))
+    except WmsError as e:
+        raise HTTPException(422, str(e))
+    return JSONResponse({k: v for k, v in o.items() if k != "history"}, status_code=201 if created else 200)
+
+
+@app.get("/api/wms/orders", tags=["wms"], summary="WMS: orders (newest first)")
+async def wms_list(status: Optional[str] = None, limit: int = 100):
+    return GATEWAY.list(status, min(1000, max(1, limit)))
+
+
+@app.get("/api/wms/orders/{ref:path}", tags=["wms"], summary="WMS: status of one order")
+async def wms_get(ref: str):
+    if ref in GATEWAY.orders:
+        return GATEWAY.get(ref)
+    old = STORE.wms_lookup(ref)
+    if old is None:
+        raise HTTPException(404, "unknown ref")
+    return old
+
+
+@app.delete("/api/wms/orders/{ref:path}", tags=["wms"], summary="WMS: cancel an order")
+async def wms_cancel(ref: str):
+    if ref not in GATEWAY.orders:
+        raise HTTPException(404, "unknown ref")
+    try:
+        o = GATEWAY.cancel(ref)
+    except WmsError as e:
+        raise HTTPException(409, str(e))
+    return {k: v for k, v in o.items() if k != "history"}
+
+
+@app.get("/api/wms/events", tags=["wms"], summary="WMS: status changes after a sequence number (polling)")
+async def wms_events(after: int = 0, limit: int = 200):
+    """Poll with the `last` value of the previous answer. Each event: {seq, ref, status, t, robots, reason, cycle}."""
+    return GATEWAY.events(after, min(1000, max(1, limit)))
+
+
+@app.get("/api/wms/status", tags=["wms"], summary="WMS gateway and mock WMS status")
+async def wms_status():
+    return {**GATEWAY.stats(), "mock": MOCK_WMS.status(), "hooks": GATEWAY.webhooks}
+
+
+@app.post("/api/wms/mock", tags=["wms"], summary="Mock WMS on / off (admin)")
+async def wms_mock(body: MockIn):
+    """On: a built-in WMS releases order waves through the WMS API and the built-in order generator stops."""
+    MOCK_WMS.set(body.on, body.wave_min, body.scale)
+    return MOCK_WMS.status()
+
+
+@app.post("/api/wms/webhooks", tags=["wms"], summary="Add a webhook (admin)")
+async def wms_hook_add(body: WebhookIn):
+    try:
+        return GATEWAY.add_webhook(body.url.strip())
+    except WmsError as e:
+        raise HTTPException(422, str(e))
+
+
+@app.delete("/api/wms/webhooks", tags=["wms"], summary="Remove a webhook (admin)")
+async def wms_hook_del(url: str):
+    return GATEWAY.remove_webhook(url)
+
+
+@app.get("/api/wms/key", tags=["wms"], summary="WMS API key (admin)")
+async def wms_key():
+    return {"key": AUTH.wms_key, "header": "X-API-Key"}
+
+
+@app.post("/api/wms/key/rotate", tags=["wms"], summary="New WMS API key (admin; the old one stops working)")
+async def wms_key_rotate():
+    return {"key": AUTH.rotate_wms_key(), "header": "X-API-Key"}
+
+
+# ---------------------------------------------------------------- shift history + replay
+@app.get("/api/shifts", tags=["replay"], summary="Recorded shifts")
+async def shifts(limit: int = 50):
+    RECORDER.flush()
+    return STORE.shifts(min(500, max(1, limit)))
+
+
+@app.get("/api/shifts/{sid}", tags=["replay"], summary="One shift: map, robots, KPIs, events, orders, alarms")
+async def shift(sid: int):
+    if sid == RECORDER.sid:
+        RECORDER.flush()
+    try:
+        return STORE.shift(sid)
+    except KeyError:
+        raise HTTPException(404, "unknown shift")
+
+
+@app.get("/api/shifts/{sid}/frames", tags=["replay"], summary="Robot positions for replay")
+async def shift_frames(sid: int, t0: float = 0, t1: float = 120):
+    """One frame per simulated second: [t, [[x, y, state, battery, load, blocked_s, order], ...]] in the robot order of the shift."""
+    if sid == RECORDER.sid:
+        RECORDER.flush()
+    return {"frames": STORE.frames(sid, t0, min(t1, t0 + 900))}
+
+
+@app.delete("/api/shifts/{sid}", tags=["replay"], summary="Delete a recorded shift (admin)")
+async def delete_shift(sid: int):
+    if sid == RECORDER.sid:
+        raise HTTPException(409, "this shift is running")
+    STORE.delete_shift(sid)
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------- experiments
@@ -553,10 +929,16 @@ async def job_status(job_id: str):
 
 @app.websocket("/ws")
 async def ws(websocket: WebSocket):
+    if auth_mod.ENABLED and AUTH.user(websocket.cookies.get(auth_mod.COOKIE)) is None:
+        await websocket.close(code=4401)
+        return
     await websocket.accept()
     try:
         while True:
-            await websocket.send_json(sim.snapshot())
+            snap = sim.snapshot()
+            snap["alarms"] = ALARMS.list()[:40]
+            snap["alarm_summary"] = ALARMS.summary()
+            await websocket.send_json(snap)
             await asyncio.sleep(TICK)
     except (WebSocketDisconnect, RuntimeError):
         pass

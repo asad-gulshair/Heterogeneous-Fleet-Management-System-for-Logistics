@@ -29,7 +29,8 @@ MODES = ("tuscore", "separate")
 # what a robot carries after finishing an action (drives the 3D view and the report)
 LOAD_AFTER = {"pick box": "tote", "drop at packing": None, "pick high shelf": "tote", "hand over": None,
               "receive tote": "tote", "place at transfer point": None, "collect tote": "tote",
-              "lift pallet": "pallet", "set down at dock": None}
+              "lift pallet": "pallet", "set down at dock": None,
+              "load tote": "tote", "unload tote": None, "set down pallet": None}
 
 
 def apply_overrides(cfg: dict, ov: dict | None) -> dict:
@@ -76,10 +77,17 @@ class Simulation:
         self.time_scale = 1.0
         self.auto_orders = True
         self.publisher = None              # set by the API process to mirror VDA 5050 traffic to Mosquitto
+        self.listeners: list = []          # order lifecycle callbacks (WMS gateway, missions, recorder)
+        self.step_hooks: list = []         # called after every physics step (missions, alarms, recorder)
         self.sla_s = self.cfg.get("sla_s", 600)    # an order is "on time" if finished within this many seconds
         self.reset(seed, allocator)
 
     # ------------------------------------------------------------ setup
+    def _notify(self, event: str, t: Task, extra=None):
+        """Order lifecycle for the WMS gateway, missions and the recorder: created, started, requeued, leg, done, cancelled."""
+        for f in self.listeners:
+            f(event, t, extra)
+
     def reset(self, seed: int | None = None, allocator: str | None = None):
         self.seed = self.cfg["shift"]["seed"] if seed is None else seed
         if allocator:
@@ -103,7 +111,8 @@ class Simulation:
                       "mismatches": 0, "by_kind": {k: 0 for k in KINDS},
                       "collisions": 0, "deadlocks": 0, "permanent": 0, "faults": 0, "reassigned": 0,
                       "evasions": 0, "traffic_delay": 0.0, "preempted": 0,
-                      "completed_in_shift": 0, "operator": 0, "on_time": 0, "commands": 0}
+                      "completed_in_shift": 0, "operator": 0, "on_time": 0, "commands": 0,
+                      "zone_wait": 0.0, "zone_entries": 0}
         self.paused = False                               # fleet-wide pause (emergency stop)
         self.heat: dict = {}                              # cell -> seconds robots spent waiting there (congestion map)
         self.grid.closed = set()
@@ -199,6 +208,8 @@ class Simulation:
         if self.sim_time >= self._next_sample:
             self._sample()
             self._next_sample += 60.0
+        for h in self.step_hooks:
+            h()
 
     def _sample(self):
         """One KPI sample per simulated minute - feeds the analytics charts."""
@@ -241,13 +252,43 @@ class Simulation:
         self.adapters[r.rtype].poll(self.sim_time, r)
 
     # ------------------------------------------------------------ orders
-    def add_order(self, kind: str, row=None, bay=None, at: float | None = None, manual=False):
+    def add_order(self, kind: str, row=None, bay=None, at: float | None = None, manual=False,
+                  priority: int = 1, ref: str | None = None, source: str | None = None):
         t = self.factory.make(kind, self.sim_time if at is None else at, row, bay, coordinated=self.mode == "tuscore")
         t.manual = manual
+        t.priority, t.ref, t.source = priority, ref, source or ("manual" if manual else "auto")
+        return self.submit(t)
+
+    def submit(self, t: Task) -> Task:
+        """Queue a ready-made order (generated, WMS or mission run)."""
         self.tasks[t.id] = t
         bisect.insort(self.queue, t.id)
         self.stats["created"] += 1
+        self._notify("created", t)
         return t
+
+    def cancel_task(self, tid: int, reason: str = "cancelled") -> bool:
+        """Cancel an order. Queued: removed. In progress: its robots stop where they are and become free."""
+        t = self.tasks.get(tid)
+        if t is None:
+            return False
+        if tid in self.queue:
+            self.queue.remove(tid)
+        for rid in t.robots.values():
+            rr = self.robots[rid]
+            if rr.task_id == t.id:
+                self._stop(rr)
+                rr.clear_task()
+                rr.load = None
+                if rr.state != "fault":
+                    rr.state = "idle"
+        self._unlock_sites(t)
+        del self.tasks[tid]
+        t.status = "cancelled"
+        self.stats["cancelled"] = self.stats.get("cancelled", 0) + 1
+        self.events.add(self.sim_time, "warn", "order", f"Order #{t.id} ({t.title}) cancelled: {reason}")
+        self._notify("cancelled", t, reason)
+        return True
 
     def _allocate(self):
         if not self.queue:
@@ -259,6 +300,7 @@ class Simulation:
         # an order may only start if none of its work cells is reserved by another active order
         now = self.sim_time
         queued = [self.tasks[i] for i in self.queue if self.tasks[i].not_before <= now and self._sites_free(self.tasks[i])]
+        queued.sort(key=lambda t: -t.priority)          # stable: same priority keeps oldest first
         for tid, mapping in self.allocator.allocate(queued, free, self.sim_time).items():
             if self._sites_free(self.tasks[tid]):          # re-check: two orders in this round may clash
                 self._dispatch(self.tasks[tid], mapping)
@@ -287,6 +329,7 @@ class Simulation:
         for role, rid in mapping.items():
             r = self.robots[rid]
             r.task_id, r.role, r.plan, r.idx = t.id, role, t.plans[role], 0
+        self._notify("started", t)
         for rid in mapping.values():
             self._begin_action(self.robots[rid])
 
@@ -332,13 +375,33 @@ class Simulation:
         elif s == "idle" and r.task_id is None and r.battery < self.opp:
             self._charge_decision(r)
 
+    def _zone_holder(self, r: Robot, z: int):
+        """Who is inside one-robot zone z (standing in it or already driving into it), other than r."""
+        for c in self.grid.mutex_cells[z]:
+            o = self.traffic.occ.get(c)
+            if o is not None and o != r.id:
+                return o
+        return None
+
     def _move(self, r: Robot, dt: float):
-        """Move along the path. A ground robot must CLAIM the next cell before leaving its cell."""
-        budget, moved, ground = r.speed * dt, False, not r.flying
+        """Move along the path. A ground robot must CLAIM the next cell before leaving its cell.
+        Traffic rules: slow zones cap the speed; a one-robot zone must be empty before a robot drives in."""
+        ground = not r.flying
+        speed = r.speed
+        if ground and self.grid.slow and r.path:
+            speed = min(speed, self.grid.slow.get(r.cell, 99.0), self.grid.slow.get(r.path[0], 99.0))
+        budget, moved = speed * dt, False
         while budget > 0 and r.path:
             nxt = r.path[0]
             if r.frac == 0 and ground:
                 owner = self.traffic.owner(nxt)
+                z = self.grid.mutex.get(nxt) if self.grid.mutex else None
+                if owner in (None, r.id) and z is not None and z != self.grid.mutex.get(r.cell):
+                    owner = self._zone_holder(r, z)     # entering a one-robot zone: wait until it is empty
+                    if owner is not None and not moved:
+                        self.stats["zone_wait"] += dt
+                    elif owner is None:
+                        self.stats["zone_entries"] += 1
                 if owner not in (None, r.id):          # cell taken -> wait
                     if not moved:
                         r.blocked_by = owner
@@ -425,9 +488,10 @@ class Simulation:
             role, actions = t.then
             nxt = Task(id=self.factory.new_id(), kind=t.kind, title=t.title + " (tote leg)", created=t.created,
                        plans={role: actions}, counted=True, not_before=self.sim_time + self.wms_delay, leg=2)
-            nxt.manual = t.manual
+            nxt.manual, nxt.priority, nxt.ref, nxt.source, nxt.mission_id = t.manual, t.priority, t.ref, t.source, t.mission_id
             self.tasks[nxt.id] = nxt
             bisect.insort(self.queue, nxt.id)
+            self._notify("leg", t, nxt)
             return
         self.recent.appendleft(t)
         s = self.stats
@@ -438,10 +502,11 @@ class Simulation:
         if t.finished - t.created <= self.sla_s:
             s["on_time"] += 1
         s["cycle_sum"] += t.finished - t.created
-        s["by_kind"][t.kind] += 1
+        s["by_kind"][t.kind] = s["by_kind"].get(t.kind, 0) + 1
         if t.mismatch:
             s["mismatches"] += 1
             self.events.add(self.sim_time, "warn", "inventory", f"{t.title}: stock mismatch flagged")
+        self._notify("done", t)
 
     # ------------------------------------------------------------ traffic: deadlocks, evasion, replanning
     def _resolve_traffic(self):
@@ -543,7 +608,7 @@ class Simulation:
             return True
         for dx, dy in NEIGH:
             n = (v.cell[0] + dx, v.cell[1] + dy)
-            if self.grid.passable(*n) and n not in occ and n != v.path[0]:
+            if self.grid.passable(*n) and n not in occ and n != v.path[0] and self.grid.can_move(v.cell, n):
                 rest = astar(self.grid, n, goal, False, blocked=occ - {goal}) or astar(self.grid, n, goal) or []
                 self._send_path(v, [n] + rest, goal, "sidestep", v.state)
                 return True
@@ -574,7 +639,8 @@ class Simulation:
             c = q.popleft()
             for dx, dy in NEIGH:
                 n = (c[0] + dx, c[1] + dy)
-                if n in prev or not self.grid.passable(*n) or n in occ or abs(n[0] - b.cell[0]) + abs(n[1] - b.cell[1]) > 10:
+                if (n in prev or not self.grid.passable(*n) or n in occ or abs(n[0] - b.cell[0]) + abs(n[1] - b.cell[1]) > 10
+                        or not self.grid.can_move(c, n)):
                     continue
                 prev[n] = c
                 if n not in keep_clear:
@@ -657,6 +723,7 @@ class Simulation:
         t.sync, t.done_roles, t.done_actions = {}, set(), 0
         t.reassigned += 1
         bisect.insort(self.queue, t.id)
+        self._notify("requeued", t, reason)
         if reason == "fault":
             self.stats["reassigned"] += 1
             self.events.add(self.sim_time, "warn", "reassign", f"Order #{t.id} ({t.title}) returned to the queue for reassignment")
@@ -804,6 +871,7 @@ class Simulation:
             "collisions": s["collisions"], "deadlocks": s["deadlocks"], "permanent_deadlocks": s["permanent"],
             "faults": s["faults"], "reassigned": s["reassigned"], "preempted": s["preempted"], "evasions": s["evasions"],
             "traffic_delay_min": round(s["traffic_delay"] / 60.0, 1),
+            "zone_wait_min": round(s["zone_wait"] / 60.0, 1),
             "completed_in_shift": s["completed_in_shift"], "operator_interventions": s["operator"],
             "on_time_pct": round(100.0 * s["on_time"] / s["completed"], 1) if s["completed"] else 100.0, "sla_s": self.sla_s,
             "dispatched": s["started"], "commands": s["commands"], "messages": self.bus.seq,

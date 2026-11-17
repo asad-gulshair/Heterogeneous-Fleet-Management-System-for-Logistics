@@ -1,4 +1,5 @@
 // Analytics, Scenario comparison, What-if / ROI and Integration pages.
+import { showMissions, showReplay, showWms, leaveReplay, enterReplay } from './step2.js';
 import { showDesigner } from './designer.js';
 import { $, api, S, fmtT, KC, glyph } from './app.js';
 
@@ -42,6 +43,10 @@ export function initPages() {
 
 export function showPage(p) {
   clearInterval(timer); timer = null;
+  if (p !== 'replay') leaveReplay();
+  if (p === 'missions') showMissions();
+  if (p === 'replay') { enterReplay(); showReplay(); }
+  if (p === 'integration') showWms();
   if (p === 'layout') showDesigner();
   if (p === 'analytics') { refreshAnalytics(); timer = setInterval(refreshAnalytics, 4000); }
   if (p === 'compare' && !inited.compare) { inited.compare = true; loadLatest('comparison', renderCompare); }

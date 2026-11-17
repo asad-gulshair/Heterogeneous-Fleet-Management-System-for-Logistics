@@ -1,6 +1,6 @@
 // 2D plan view of the twin (canvas). Also the fallback when WebGL is not available.
 const KC = { box_pick: '#2E9FE8', high_pick: '#f5a524', pallet_move: '#e5484d', inventory_scan: '#46a758' };
-const KL = { box_pick: 'B', high_pick: 'H', pallet_move: 'P', inventory_scan: 'S' };
+const KL = { box_pick: 'B', high_pick: 'H', pallet_move: 'P', inventory_scan: 'S', mission: 'M', transport: 'T' };
 const batColor = b => b > 40 ? '#3ddc97' : b > 20 ? '#f5a524' : '#ff5d6c';
 
 export class Plan2D {
@@ -20,6 +20,37 @@ export class Plan2D {
     const w = this.cell * W, h = this.cell * H;
     for (const c of [this.cv, this.floor]) { c.width = Math.round(w * this.dpr); c.height = Math.round(h * this.dpr); }
     this.cv.style.width = w + 'px'; this.cv.style.height = h + 'px'; this._drawFloor();
+  }
+  _drawTraffic(g, c, top) {                              // traffic rules drawn in the Layout Designer (top = waypoints, over racks)
+    const T = this.map.traffic || {};
+    if (top) return this._drawWaypoints(g, c, T);
+    for (const z of T.speed || []) {
+      g.fillStyle = 'rgba(245,165,36,.08)'; g.fillRect(z.x * c, z.y * c, z.w * c, z.h * c);
+      g.setLineDash([3, 3]); g.strokeStyle = 'rgba(245,165,36,.8)'; g.lineWidth = 1.2; g.strokeRect(z.x * c, z.y * c, z.w * c, z.h * c); g.setLineDash([]);
+      g.font = `700 ${Math.max(9, c * .42)}px Inter,sans-serif`; g.fillStyle = '#f5c46b'; g.textBaseline = 'top'; g.fillText(`≤ ${z.max} m/s`, z.x * c + 4, z.y * c + 4);
+    }
+    for (const l of T.lanes || []) {
+      const [dx, dy] = { E: [1, 0], W: [-1, 0], S: [0, 1], N: [0, -1] }[l.dir || 'E'];
+      g.fillStyle = 'rgba(34,197,94,.14)'; g.fillRect(l.x * c, l.y * c, l.w * c, l.h * c);
+      g.strokeStyle = 'rgba(34,197,94,.85)'; g.lineWidth = Math.max(1.2, c * .07); g.lineCap = 'round'; g.lineJoin = 'round';
+      const along = dx ? l.w : l.h, across = dx ? l.h : l.w, k = c * .28;
+      for (let i = 1; i < along; i += 2) for (let j = 0; j < across; j++) {
+        const ax = (dx ? l.x + i : l.x + j + .5) * c, ay = (dx ? l.y + j + .5 : l.y + i) * c;
+        g.beginPath(); g.moveTo(ax - dx * k + dy * k, ay - dy * k + dx * k); g.lineTo(ax + dx * k, ay + dy * k); g.lineTo(ax - dx * k - dy * k, ay - dy * k - dx * k); g.stroke();
+      }
+    }
+    for (const z of T.single || []) {
+      g.fillStyle = 'rgba(167,139,250,.13)'; g.fillRect(z.x * c, z.y * c, z.w * c, z.h * c);
+      g.strokeStyle = '#a78bfa'; g.lineWidth = 2; g.strokeRect(z.x * c + 1, z.y * c + 1, z.w * c - 2, z.h * c - 2);
+      if (z.w * c > 26) { g.font = `700 ${Math.max(8, c * .38)}px Inter,sans-serif`; g.fillStyle = '#cdbcff'; g.textBaseline = 'top'; g.fillText((z.name || '1 robot').toUpperCase(), z.x * c + 3, z.y * c + 3); }
+    }
+  }
+  _drawWaypoints(g, c, T) {
+    for (const [name, [x, y]] of Object.entries(T.waypoints || {})) {
+      const cx = (x + .5) * c, cy = (y + .5) * c, r = c * .36;
+      g.fillStyle = '#38bdf8'; g.beginPath(); g.moveTo(cx, cy - r); g.lineTo(cx + r, cy); g.lineTo(cx, cy + r); g.lineTo(cx - r, cy); g.closePath(); g.fill();
+      g.font = `700 ${Math.max(8, c * .4)}px Inter,sans-serif`; g.fillStyle = '#9fdcfb'; g.textBaseline = 'bottom'; g.textAlign = 'center'; g.fillText(name, cx, cy - r - 1); g.textAlign = 'left';
+    }
   }
   _rr(g, x, y, w, h, r) { g.beginPath(); g.roundRect ? g.roundRect(x, y, w, h, r) : g.rect(x, y, w, h); }
   _drawFloor() {
@@ -42,6 +73,7 @@ export class Plan2D {
       if (n.name && n.w * c > 40) { g.font = `700 ${Math.max(9, c * .45)}px Inter,sans-serif`; g.fillStyle = '#ffb3ba'; g.textBaseline = 'top'; g.fillText(n.name.toUpperCase(), n.x * c + 5, n.y * c + 5); }
     }
     for (const w of M.walls || []) { g.fillStyle = '#5b6f99'; g.fillRect(w.x * c, w.y * c, w.w * c, w.h * c); }
+    this._drawTraffic(g, c, false);
     for (const [k, z] of Object.entries(M.zones)) {
       g.fillStyle = z.color + '33'; this._rr(g, z.x * c, z.y * c, z.w * c, z.h * c, 6); g.fill();
       g.setLineDash([5, 4]); g.strokeStyle = z.color + 'cc'; g.lineWidth = 1.2; g.stroke(); g.setLineDash([]);
@@ -59,6 +91,7 @@ export class Plan2D {
       if (hz) { g.textAlign = 'right'; g.fillText(s.name || 'A' + (i + 1), x - 6, y + h / 2); } else { g.textAlign = 'center'; g.fillText(s.name || 'A' + (i + 1), x + w / 2, y - c * .5); }
       g.textAlign = 'left';
     });
+    this._drawTraffic(g, c, true);
   }
   update(snap) { this.snap = snap; }
   setHeat(data) { this.heatData = data; }

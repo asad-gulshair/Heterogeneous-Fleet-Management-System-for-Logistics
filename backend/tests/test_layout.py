@@ -213,3 +213,111 @@ def test_robot_library_api():
     assert c.put("/api/robot-types/c_fast", json={"role": "fly"}).status_code == 422
     assert c.put("/api/robot-types/Bad Key", json={"role": "scan"}).status_code == 400
     assert "c_fast" not in c.delete("/api/robot-types/c_fast").json()
+
+
+# ---------------------------------------------------------------- Step 2 part 1: traffic rules
+def corridor(**extra):
+    """30 x 20 m: two racks with a 1 m aisle between them (y = 5), open at both ends."""
+    L = small()
+    for e in L["elements"]:
+        if e["id"] == "r2":
+            e["y"] = 6
+    L["elements"] += [{"id": "w1", "type": "wall", "x": 4, "y": 2, "w": 16, "h": 1},
+                      {"id": "w2", "type": "wall", "x": 4, "y": 8, "w": 16, "h": 1}]
+    L.update(extra)
+    return L
+
+
+def test_one_way_lane_into_a_dead_end_is_an_error():
+    L = corridor()
+    L["elements"] += [{"id": "end", "type": "wall", "x": 20, "y": 2, "w": 1, "h": 7},     # close the east end
+                      {"id": "ln", "type": "lane", "x": 4, "y": 5, "w": 16, "h": 1, "dir": "E"}]
+    rep = check_layout(L)
+    assert "lane_dead_end" in codes(rep) and not rep["ok"]
+    for e in L["elements"]:                                                                  # pointing out is fine
+        if e["id"] == "ln":
+            e["dir"] = "W"
+    rep = check_layout(L)
+    assert "lane_dead_end" not in codes(rep)
+
+
+def test_lanes_that_trap_a_station_and_lanes_that_clash():
+    L = small()
+    # the packing station sits behind a 1 m door; a one-way lane through the door only lets robots in
+    L["elements"] += [{"id": "w1", "type": "wall", "x": 21, "y": 0, "w": 1, "h": 3},
+                      {"id": "w2", "type": "wall", "x": 21, "y": 4, "w": 1, "h": 4},
+                      {"id": "w3", "type": "wall", "x": 21, "y": 7, "w": 9, "h": 1},
+                      {"id": "ln", "type": "lane", "x": 20, "y": 3, "w": 3, "h": 1, "dir": "E"}]
+    rep = check_layout(L)
+    assert "lane_trap" in codes(rep) or "lane_dead_end" in codes(rep)
+    assert not rep["ok"]
+    L = corridor()
+    L["elements"] += [{"id": "a", "type": "lane", "x": 4, "y": 5, "w": 10, "h": 1, "dir": "E"},
+                      {"id": "b", "type": "lane", "x": 10, "y": 5, "w": 10, "h": 1, "dir": "W"}]
+    assert "lane_conflict" in codes(check_layout(L))
+
+
+def test_traffic_compiles_and_waypoints_are_checked():
+    L = corridor()
+    L["elements"] += [{"id": "ln", "type": "lane", "x": 4, "y": 5, "w": 16, "h": 1, "dir": "N"},   # wrong axis -> fixed
+                      {"id": "sz", "type": "slow", "x": 22, "y": 10, "w": 4, "h": 4, "max_speed": 0.3},
+                      {"id": "one", "type": "single", "x": 20, "y": 4, "w": 3, "h": 3},
+                      {"id": "wp", "type": "waypoint", "x": 25, "y": 16, "w": 5, "h": 5, "name": "Wait A"},
+                      {"id": "wp2", "type": "waypoint", "x": 8, "y": 3}]                              # inside a rack
+    rep = check_layout(L)
+    t = rep["config"]["traffic_rules"]
+    assert t["lanes"][0]["dir"] in ("E", "W") and t["speed"][0]["max"] == 0.3 and len(t["single"]) == 1
+    assert t["waypoints"]["Wait A"] == [25, 16]
+    assert "traffic_on_solid" in codes(rep) and not rep["ok"]
+
+
+def test_suggested_traffic_on_the_l_shaped_site():
+    from app.layout import suggest_traffic
+    L = example("l-shaped-crossdock")
+    sug = suggest_traffic(L)
+    kinds = [e["type"] for e in sug["elements"]]
+    assert kinds.count("lane") >= 2 and kinds.count("single") >= 1
+    dirs = {e["dir"] for e in sug["elements"] if e["type"] == "lane"}
+    assert dirs == {"E", "W"}                                  # neighbouring aisles go opposite ways
+    L["elements"] += sug["elements"]
+    assert check_layout(L)["ok"]
+    assert suggest_traffic(example("demo-warehouse"))["elements"] == []
+
+
+def test_simulation_obeys_one_way_lanes_one_robot_zones_and_slow_zones():
+    from app.layout import suggest_traffic
+    L = example("l-shaped-crossdock")
+    L["elements"] += suggest_traffic(L)["elements"]
+    L["elements"].append({"id": "slow", "type": "slow", "x": 40, "y": 38, "w": 20, "h": 6, "max_speed": 0.5})
+    cfg, rep = compile_layout(L)
+    assert rep["ok"]
+    p = os.path.join(os.environ["TUSCORE_DATA"], "traffic.yaml")
+    yaml.safe_dump(cfg, open(p, "w"), sort_keys=False)
+    for mode in ("tuscore", "separate"):
+        s = Simulation(p, seed=2, mode=mode, overrides={"shift_hours": 0.5})
+        g, prev, wrong, crowded, slow_fast = s.grid, {r.id: r.cell for r in s.robots.values()}, 0, 0, 0
+        while s.sim_time < 1800:
+            before = {r.id: (r.cell, r.frac) for r in s.robots.values()}
+            s._step(0.1)
+            for r in s.robots.values():
+                if r.flying:
+                    continue
+                if r.cell != prev[r.id]:
+                    wrong += not g.can_move(prev[r.id], r.cell)
+                    prev[r.id] = r.cell
+                c0, f0 = before[r.id]
+                if c0 == r.cell and c0 in g.slow and r.frac - f0 > g.slow[c0] * 0.1 + 1e-9:
+                    slow_fast += 1
+            for cs in g.mutex_cells:
+                crowded += sum(1 for r in s.robots.values() if not r.flying and r.cell in cs) > 1
+        k = s.kpis()
+        assert wrong == 0 and crowded == 0 and slow_fast == 0, (mode, wrong, crowded, slow_fast)
+        assert k["collisions"] == 0 and k["permanent_deadlocks"] == 0 and k["completed"] > 100
+        assert s.stats["zone_entries"] > 0
+
+
+def test_suggest_traffic_api():
+    from fastapi.testclient import TestClient
+    from app import main
+    r = TestClient(main.app).post("/api/designs/suggest-traffic", json=example("l-shaped-crossdock")).json()
+    assert r["elements"] and r["message"].startswith("Suggested")

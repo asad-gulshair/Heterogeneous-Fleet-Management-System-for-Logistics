@@ -3,6 +3,8 @@
 Lane discipline: moves in the 'wrong' lane cost slightly more, so opposing traffic naturally
 uses different lanes (like driving on one side of the road) instead of meeting head-on.
   east-bound -> even rows, west-bound -> odd rows, south-bound -> even columns, north-bound -> odd columns
+Drawn traffic rules: one-way lanes are hard rules (a move against the lane is never planned); slow zones cost
+more time (1 m at 0.5 m/s costs like 2 m), so routes avoid them when there is a reasonable way around.
 """
 import heapq
 from .grid import Grid
@@ -27,6 +29,8 @@ def astar(grid: Grid, start, goal, flying: bool = False, blocked=None):
     if not grid.passable(*goal, flying):
         return None
 
+    rules, slow = grid.has_rules, grid.slow
+
     def h(c):  # Manhattan distance: admissible because every step costs >= 1
         return abs(c[0] - goal[0]) + abs(c[1] - goal[1])
 
@@ -47,7 +51,11 @@ def astar(grid: Grid, start, goal, flying: bool = False, blocked=None):
             n = (cur[0] + dx, cur[1] + dy)
             if n in blocked or not grid.passable(*n, flying):
                 continue
+            if not flying and rules and not grid.can_move(cur, n):
+                continue
             ng = g + (1.0 if flying else _lane_cost(cur, n) + (CLOSED_PENALTY if n in grid.closed else 0.0))
+            if not flying and n in slow:
+                ng += max(0.0, 1.0 / slow[n] - 1.0)
             if ng < g_cost.get(n, 1e18):
                 g_cost[n] = ng
                 came_from[n] = cur

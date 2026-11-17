@@ -32,6 +32,19 @@ class Task:
     then: tuple | None = None        # (role, actions) follow-up leg created when this leg finishes (separate managers)
     not_before: float = 0.0          # may not be dispatched before this time (WMS hand-over delay)
     leg: int = 1                     # 1 = first leg, 2 = follow-up leg
+    priority: int = 1                # 0 low, 1 normal, 2 high, 3 urgent
+    ref: str | None = None           # external reference (WMS order id)
+    source: str = "auto"             # auto (generator) | manual (console) | wms | mission
+    mission_id: int | None = None    # run of a mission template
+    require: dict = field(default_factory=dict)      # role -> {"type": robot type} or {"robot": robot id}
+
+    def allows(self, role: str, robot) -> bool:
+        need = self.require.get(role)
+        if not need:
+            return True
+        if "robot" in need:
+            return robot.id == need["robot"]
+        return robot.rtype == need.get("type", robot.rtype)
 
     @property
     def total_actions(self) -> int:
@@ -50,5 +63,6 @@ class Task:
             "created": round(self.created, 1), "wait": round(wait, 1),
             "pickup": list(self.pickup()), "manual": self.manual,
             "mismatch": self.mismatch, "reassigned": self.reassigned,
+            "priority": self.priority, "ref": self.ref, "source": self.source, "mission": self.mission_id,
             "cycle": round(self.finished - self.created, 1) if self.finished is not None else None,
         }

@@ -17,13 +17,14 @@ from pathlib import Path
 
 import yaml
 
-from .grid import Grid, zone_type, cells_of, FACES
+from .grid import Grid, zone_type, cells_of, FACES, DIRS
 
 SCHEMA = "tuscore.layout/1"
 BASE_CONFIG = Path(__file__).resolve().parents[2] / "config" / "warehouse.yaml"
 
 SOLIDS = ("wall", "rack", "nogo")
 ZONES = ("packing", "dock", "pallet_area", "charging")
+TRAFFIC = ("lane", "slow", "single", "waypoint")      # floor markings: rules for robots, not obstacles
 ELEMENTS = {
     "rack":        {"label": "Rack",             "color": "#4b6cc0", "default": [10, 2], "hint": "Shelving. Picked from its long sides; the drone flies over it."},
     "wall":        {"label": "Wall",             "color": "#8b97ad", "default": [10, 1], "hint": "Blocks every robot, the drone included."},
@@ -32,6 +33,15 @@ ELEMENTS = {
     "dock":        {"label": "Loading dock",     "color": "#7a5a1f", "default": [8, 8],  "hint": "Pallet stackers bring pallets here for the truck."},
     "pallet_area": {"label": "Pallet area",      "color": "#3b4a6b", "default": [12, 10], "hint": "Pallets wait here to be moved to a dock."},
     "charging":    {"label": "Charging area",    "color": "#2E9FE8", "default": [12, 4], "hint": "Robots park and charge here. Every robot starts here."},
+    # traffic layer
+    "lane":        {"label": "One-way lane",     "color": "#22c55e", "default": [10, 1], "group": "traffic",
+                    "hint": "Robots drive along it in one direction only (crossing is allowed). Stops head-on meetings in narrow aisles."},
+    "slow":        {"label": "Slow zone",        "color": "#f5a524", "default": [6, 6],  "group": "traffic",
+                    "hint": "Speed limit, e.g. where people walk or near doors. Routes avoid it when there is a good way around."},
+    "single":      {"label": "One-robot zone",   "color": "#a78bfa", "default": [3, 3],  "group": "traffic",
+                    "hint": "Only one robot inside at a time: intersections, doors, narrow passages. Others wait at the edge."},
+    "waypoint":    {"label": "Waypoint",         "color": "#38bdf8", "default": [1, 1],  "group": "traffic",
+                    "hint": "A named point on the floor: a mission stop, a wait or parking spot."},
 }
 SAFETY_M = 0.15          # clearance each side of a robot in an aisle
 
@@ -147,6 +157,15 @@ def normalise(layout: dict) -> dict:
             ne["levels"] = int(max(1, min(8, int(e.get("levels") or 4))))
         if e["type"] == "charging" and e.get("bays"):
             ne["bays"] = int(max(1, min(60, int(e["bays"]))))
+        if e["type"] == "lane":
+            d = e.get("dir") if e.get("dir") in DIRS else None
+            if d is None or (r["w"] > r["h"] and d in "NS") or (r["h"] > r["w"] and d in "EW"):
+                d = {"N": "E", "S": "W", "E": "S", "W": "N"}.get(d, "E" if r["w"] >= r["h"] else "S") if d else ("E" if r["w"] >= r["h"] else "S")
+            ne["dir"] = d
+        if e["type"] == "slow":
+            ne["max_speed"] = round(float(max(0.1, min(3.0, float(e.get("max_speed") or 0.5)))), 2)
+        if e["type"] == "waypoint":
+            ne["w"] = ne["h"] = 1
         els.append(ne)
     L["elements"] = els
     cat = catalog()
@@ -193,6 +212,16 @@ def _names(L: dict) -> dict:
     for e in sorted([e for e in L["elements"] if e["type"] in ZONES], key=lambda e: (e["y"], e["x"])):
         count[e["type"]] = count.get(e["type"], 0) + 1
         out[e["id"]] = f"{e['type']}_{count[e['type']]}"
+    used = {e.get("name") for e in L["elements"] if e["type"] == "waypoint"}
+    n = 0
+    for e in sorted([e for e in L["elements"] if e["type"] == "waypoint"], key=lambda e: (e["y"], e["x"])):
+        if e.get("name"):
+            out[e["id"]] = e["name"]
+            continue
+        n += 1
+        while f"WP{n}" in used:
+            n += 1
+        out[e["id"]] = f"WP{n}"
     return out
 
 
@@ -211,12 +240,21 @@ def to_config(layout: dict, effective_orders: dict | None = None) -> dict:
     cfg["name"] = L["name"]
     cfg["width"], cfg["height"] = W, H
     cfg["shelves"], cfg["walls"], cfg["nogo"], cfg["zones"] = [], [], [], {}
+    traffic = {"lanes": [], "speed": [], "single": [], "waypoints": {}}
     bays = 0
     for e in L["elements"]:
         r = _clip(e, W, H)
         if not r:
             continue
-        if e["type"] == "rack":
+        if e["type"] == "lane":
+            traffic["lanes"].append(dict(r, dir=e["dir"], id=e["id"]))
+        elif e["type"] == "slow":
+            traffic["speed"].append(dict(r, max=e["max_speed"], id=e["id"]))
+        elif e["type"] == "single":
+            traffic["single"].append(dict(r, id=e["id"], **({"name": e["name"]} if e.get("name") else {})))
+        elif e["type"] == "waypoint":
+            traffic["waypoints"][names[e["id"]]] = [r["x"], r["y"]]
+        elif e["type"] == "rack":
             cfg["shelves"].append(dict(r, name=names[e["id"]], levels=e.get("levels", 4), orient="h" if r["w"] >= r["h"] else "v",
                                        id=e["id"]))
         elif e["type"] == "wall":
@@ -228,6 +266,8 @@ def to_config(layout: dict, effective_orders: dict | None = None) -> dict:
             bays += e.get("bays", 0)
     if bays:
         cfg["charging_bays"] = bays
+    if any(traffic.values()):
+        cfg["traffic_rules"] = traffic
     for k, t in cfg["robot_types"].items():
         t["count"] = L["robots"].get(k, 0)
         t["model"] = k
@@ -346,6 +386,17 @@ def check_layout(layout: dict) -> dict:
         for b in els[i + 1:]:
             if not _overlap(a, b):
                 continue
+            ta, tb = a["type"] in TRAFFIC, b["type"] in TRAFFIC
+            if ta or tb:                                 # floor markings may lie on work areas and on each other
+                t, o = (a, b) if ta else (b, a)
+                if o["type"] in SOLIDS and t["type"] != "slow":
+                    add("error" if t["type"] == "waypoint" else "warning", "traffic_on_solid",
+                        f"{label(t)} lies on {label(o)}." + (" A waypoint must be on free floor." if t["type"] == "waypoint" else
+                                                            " Those cells stay blocked."), [t["id"], o["id"]], fix="Move it onto free floor.")
+                elif a["type"] == b["type"] == "lane" and a["dir"] != b["dir"] and (a["dir"] in "EW") == (b["dir"] in "EW"):
+                    add("error", "lane_conflict", f"{label(a)} and {label(b)} overlap in opposite directions.",
+                        [a["id"], b["id"]], fix="Make them go the same way or move one.")
+                continue
             sa, sb = a["type"] in SOLIDS, b["type"] in SOLIDS
             if sa and sb:
                 if a["type"] != b["type"]:
@@ -385,12 +436,50 @@ def check_layout(layout: dict) -> dict:
     # stations reachable from the charging area
     for e in els:
         if e["type"] in ("packing", "dock", "pallet_area") and _clip(e, W, H):
-            if not any(c in reach for c in cells_of(_clip(e, W, H))):
-                add("error", "unreachable", f"{label(e)} cannot be reached from the charging area.", [e["id"]],
-                    fix="Open a path: move a wall, rack or no-go zone.")
+            cs = list(cells_of(_clip(e, W, H)))
+            if not any(c in reach for c in cs):
+                if any(c in grid.reach_any for c in cs):
+                    add("error", "lane_trap", f"One-way lanes stop robots from reaching {label(e)} and driving back.", [e["id"]],
+                        fix="Turn a one-way lane around or leave a two-way path.")
+                else:
+                    add("error", "unreachable", f"{label(e)} cannot be reached from the charging area.", [e["id"]],
+                        fix="Open a path: move a wall, rack or no-go zone.")
     zs = [n for n in grid.zones_of("charging")]
     if zs and not any(c in reach for n in zs for c in cells_of(grid.zones[n])):
         add("error", "charging_blocked", "The charging area has no free floor.", [e["id"] for e in by("charging")])
+
+    # traffic rules
+    if grid.has_rules:
+        for e in by("lane"):
+            r = _clip(e, W, H)
+            cs = [c for c in cells_of(r) if grid.passable(*c)] if r else []
+            trap = [c for c in cs if c in grid.reach_fwd and c not in grid.reach_back]
+            if trap:
+                add("error", "lane_dead_end", f"{label(e)} leads into a dead end: robots that drive in cannot get back out.",
+                    [e["id"]], cells=[list(c) for c in trap[:60]], fix="Turn it around, shorten it, or open its far end.")
+            elif cs and not any(c in grid.reach_fwd for c in cs):
+                add("warning", "lane_unused", f"No robot can drive into {label(e)} the way it points.", [e["id"]],
+                    fix="Check its direction.")
+    chargers = set(grid.chargers)
+    face_cells = {grid._face_cells(grid.rows[i], b, f)[0] for i in range(len(grid.rows)) for b, f in grid.faces[i]}
+    for e in by("single"):
+        r = _clip(e, W, H)
+        if not r:
+            continue
+        cs = set(cells_of(r))
+        if cs & chargers:
+            add("warning", "single_charger", f"{label(e)} contains charger bays. A charging robot holds the zone for a long time.",
+                [e["id"]], fix="Keep chargers outside one-robot zones.")
+        busy = [o for o in els if o["type"] in ("packing", "dock", "pallet_area") and _overlap(o, r)]
+        if busy or cs & face_cells:
+            what = label(busy[0]) if busy else "rack bays"
+            add("warning", "single_work", f"{label(e)} covers {what}. A robot working there holds the zone, so others wait.",
+                [e["id"]] + [o["id"] for o in busy[:1]], fix="Use one-robot zones for crossings and doors, not work areas.")
+    for e in by("waypoint"):
+        c = (e["x"], e["y"])
+        if grid.passable(*c) and c not in reach:
+            add("error", "waypoint_unreachable", f"Waypoint {names[e['id']]} cannot be reached from the charging area.", [e["id"]],
+                fix="Move it onto open floor.")
 
     # racks: reachable faces, aisle width for the scissor lift
     rx, ry = _runs(grid)
@@ -410,7 +499,7 @@ def check_layout(layout: dict) -> dict:
             continue
         if len(faces) < n:
             add("warning", "rack_partial", f"Rack {s['name']}: {n - len(faces)} of {n} bays cannot be reached.", [e["id"]])
-        widths, lift_bays = [], []
+        widths, lift_bays, other_face = [], [], False
         for bay, f0 in faces:                      # widest reachable face of every bay
             best, best_f = 0, f0
             for f in FACES[s["orient"]]:
@@ -422,6 +511,7 @@ def check_layout(layout: dict) -> dict:
             widths.append(best)
             if best >= lift_need:
                 lift_bays.append([bay, best_f])
+                other_face = other_face or best_f != f0
         narrow = [w for w in widths if w < tote_need]
         if narrow:
             add("error", "aisle_tote", f"Aisle at rack {s['name']} is {min(widths)} m wide; the {tote_r['label']} needs {tote_need} m "
@@ -435,8 +525,8 @@ def check_layout(layout: dict) -> dict:
                 f"({lift_r['width_m']} m + {SAFETY_M} m each side). "
                 + ("No high picks from this rack." if lift_ok == 0 else f"High picks only at {lift_ok} of {len(widths)} bays."),
                 [e["id"]], fix=f"Widen the aisle to {lift_need} m.")
-        if lift_ok < len(widths):
-            s_cfg["lift_bays"] = lift_bays          # high picks only where the TL-65 fits
+        if lift_ok < len(widths) or other_face:
+            s_cfg["lift_bays"] = lift_bays          # high picks only where (and from the side where) the TL-65 fits
     if role_n("high_pick") and eff.get("high_pick", 0) > 0 and have_racks and lift_bays_total == 0:
         add("error", "no_lift_aisle", f"No rack has an aisle wide enough for the {lift_r['label']}, so high picks are impossible.")
 
@@ -468,9 +558,102 @@ def check_layout(layout: dict) -> dict:
     stats = {"floor_m2": W * H, "racks": len(by("rack")), "rack_bays": sum(grid.rack_len(s) for s in grid.rows),
              "pickable_bays": sum(len(f) for f in grid.faces), "chargers": len(grid.chargers),
              "robots": total, "free_m2": sum(1 for x in range(W) for y in range(H) if (x, y) not in grid.blocked),
-             "reachable_m2": len(reach), "orders_per_hour": round(sum(eff.values()), 1)}
+             "reachable_m2": len(reach), "orders_per_hour": round(sum(eff.values()), 1),
+             "lanes_m": sum(e["w"] * e["h"] for e in by("lane")), "one_robot_zones": len(by("single")),
+             "slow_zones": len(by("slow")), "waypoints": len(by("waypoint"))}
     return {"ok": errors == 0, "errors": errors, "warnings": sum(1 for p in P if p["level"] == "warning"),
             "problems": P, "stats": stats, "effective_orders": eff, "config": cfg}
+
+
+# ---------------------------------------------------------------- traffic assistant
+def suggest_traffic(layout: dict) -> dict:
+    """Suggest traffic rules the way a fleet engineer would:
+      * every 1 m aisle open at both ends becomes a one-way lane, neighbouring aisles in opposite directions
+        (a snake), so two robots never meet head-on where they cannot pass;
+      * every door gap of 1-3 m in a wall becomes a one-robot zone.
+    A suggestion is kept only if the layout has no new errors with it."""
+    L = normalise(layout)
+    W, H = L["width_m"], L["height_m"]
+    grid = Grid(to_config(L))
+    rx, ry = _runs(grid)
+    reach = grid.reach
+    taken = {c for e in L["elements"] if e["type"] in ("lane", "single") for c in cells_of(e)}
+    free = lambda c: c in reach
+
+    def segments(horizontal):
+        out = []
+        outer, inner = (range(H), range(W)) if horizontal else (range(W), range(H))
+        for a in outer:
+            cell = (lambda i: (i, a)) if horizontal else (lambda i: (a, i))
+            narrow = lambda c: free(c) and (ry if horizontal else rx).get(c) == 1 and c not in taken
+            i, n = 0, (W if horizontal else H)
+            while i < n:
+                if narrow(cell(i)):
+                    i0 = i
+                    while i < n and narrow(cell(i)):
+                        i += 1
+                    if i - i0 >= 4 and free(cell(i0 - 1)) and free(cell(i)):      # open at both ends
+                        out.append((a, i0, i - i0))
+                i += 1
+        return out
+
+    cands = []
+    for k, (y, x0, n) in enumerate(segments(True)):
+        cands.append({"type": "lane", "x": x0, "y": y, "w": n, "h": 1, "dir": "E" if k % 2 == 0 else "W"})
+    for k, (x, y0, n) in enumerate(segments(False)):
+        cands.append({"type": "lane", "x": x, "y": y0, "w": 1, "h": n, "dir": "S" if k % 2 == 0 else "N"})
+    # door gaps: a short opening in a 1 m thick wall, with open floor on both sides
+    hard = grid.hard
+    for vertical_wall in (True, False):
+        seen = set()
+        for c in sorted(reach):
+            if c in seen or c in taken:
+                continue
+            x, y = c
+            if vertical_wall:
+                side = ((x - 1, y), (x + 1, y)); along = (0, 1)
+                wall_ends = lambda p: (p[0], p[1] - 1) in hard
+            else:
+                side = ((x, y - 1), (x, y + 1)); along = (1, 0)
+                wall_ends = lambda p: (p[0] - 1, p[1]) in hard
+            if not (all(free(s_) for s_ in side) and wall_ends(c)):
+                continue
+            gap = [c]
+            while len(gap) <= 3:
+                nx = (gap[-1][0] + along[0], gap[-1][1] + along[1])
+                if nx in hard:
+                    break
+                if not free(nx):
+                    gap = []
+                    break
+                gap.append(nx)
+            else:
+                gap = []
+            seen.update(gap)
+            if gap and len(gap) <= 3:
+                g0 = gap[0]
+                cands.append({"type": "single", "x": g0[0], "y": g0[1], "w": 1 if vertical_wall else len(gap),
+                              "h": len(gap) if vertical_wall else 1, "name": "Door"})
+    base = check_layout(L)
+    base_err = {(p["code"], tuple(p["ids"])) for p in base["problems"] if p["level"] == "error"}
+    kept, cur = [], copy.deepcopy(L)
+    for i, e in enumerate(cands):
+        e["id"] = f"t{i + 1}_{len(L['elements'])}"
+        trial = copy.deepcopy(cur)
+        trial["elements"].append(e)
+        rep = check_layout(trial)
+        err = {(p["code"], tuple(p["ids"])) for p in rep["problems"] if p["level"] == "error"}
+        if err <= base_err:
+            cur, kept = trial, kept + [e]
+    lanes = sum(1 for e in kept if e["type"] == "lane")
+    doors = sum(1 for e in kept if e["type"] == "single")
+    if kept:
+        msg = " and ".join(x for x in (f"{lanes} one-way lane{'s' * (lanes != 1)}" if lanes else "",
+                                       f"{doors} one-robot door zone{'s' * (doors != 1)}" if doors else "") if x)
+        msg = f"Suggested {msg}."
+    else:
+        msg = "No narrow aisles or doors found: two-way traffic is fine in this layout."
+    return {"elements": kept, "message": msg}
 
 
 def compile_layout(layout: dict) -> tuple[dict, dict]:

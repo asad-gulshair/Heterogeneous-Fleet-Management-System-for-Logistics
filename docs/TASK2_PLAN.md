@@ -80,6 +80,10 @@ work in). Racks are horizontal (long side along x) or vertical; picking happens 
 | Floor plan scale wrong -> every distance wrong | Two-point scale tool, live scale bar and dimensions, warning if the site is implausibly large or small |
 | Huge / multi-page PDF, rotated scan | Render the chosen page at 150 dpi (max 7000 px), images max 8000 px; turn 90 deg or any angle, fade, dark mode, lock (done in Part 2) |
 | CAD file (DWG / DXF) uploaded | Rejected with the advice to export a PDF from the CAD tool |
+| Two robots meet head-on in a 1 m aisle | One-way lanes; the traffic assistant makes neighbouring narrow aisles a snake (done in Step 2 part 1) |
+| A one-way lane traps robots | Forward + backward reachability: dead-end lanes and trapped stations are errors |
+| Intersections and doors | One-robot zones; robots wait at the edge, waits feed the deadlock resolver |
+| People areas | Slow zones with a speed limit; routes avoid them when cheap |
 | Robot from another vendor | Custom robot type: job + size + speed + battery + price + protocol; checked by its own width (done in Part 2) |
 | Aisle too narrow for a robot type | Per-type corridor check (robot width + 0.15 m safety each side); rack faces a TL-65 cannot reach are reported and no high picks are generated there |
 | Rack with no reachable face | Error per rack; partly blocked racks only get orders at reachable bays |

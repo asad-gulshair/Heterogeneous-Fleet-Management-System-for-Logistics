@@ -5,9 +5,12 @@ import { $, api, toast } from './app.js';
 const NS = 'http://www.w3.org/2000/svg';
 const SOLID = new Set(['rack', 'wall', 'nogo']);
 const TOOL_ORDER = ['rack', 'wall', 'packing', 'charging', 'pallet_area', 'dock', 'nogo'];
+const TRAFFIC_ORDER = ['lane', 'single', 'slow', 'waypoint'];
+const TRAFFIC = new Set(TRAFFIC_ORDER);
+const ARROW = { E: '→', W: '←', S: '↓', N: '↑' }, TURN = { E: 'S', S: 'W', W: 'N', N: 'E' };
 const ORDER_NAMES = { box_pick: 'Box picks', high_pick: 'High-shelf picks', pallet_move: 'Pallet moves', inventory_scan: 'Inventory scans' };
 const DRAFT_KEY = 'tuscore.designer.draft';
-const SHORT = { packing: 'Packing', charging: 'Charging', pallet_area: 'Pallets', dock: 'Dock' };
+const SHORT = { packing: 'Packing', charging: 'Charging', pallet_area: 'Pallets', dock: 'Dock', lane: 'Lane', slow: 'Slow zone', single: 'One-robot zone' };
 
 const D = {
   cat: null, L: null, did: null, version: null, template: false, dirty: false,
@@ -43,8 +46,15 @@ const clampX = v => Math.max(0, Math.min(D.L.width_m, v)), clampY = v => Math.ma
 function names() {                                    // same naming as the back end: racks A1.. top to bottom
   const out = {}, cnt = {};
   els().filter(e => e.type === 'rack').sort((a, b) => a.y - b.y || a.x - b.x).forEach((e, i) => { out[e.id] = e.name || 'A' + (i + 1); });
-  els().filter(e => !SOLID.has(e.type)).sort((a, b) => a.y - b.y || a.x - b.x).forEach(e => {
-    cnt[e.type] = (cnt[e.type] || 0) + 1; out[e.id] = `${SHORT[e.type] || D.cat.elements[e.type].label} ${cnt[e.type]}`;
+  els().filter(e => !SOLID.has(e.type) && e.type !== 'waypoint').sort((a, b) => a.y - b.y || a.x - b.x).forEach(e => {
+    cnt[e.type] = (cnt[e.type] || 0) + 1; out[e.id] = e.type === 'single' && e.name ? e.name : `${SHORT[e.type] || D.cat.elements[e.type].label} ${cnt[e.type]}`;
+  });
+  const wps = els().filter(e => e.type === 'waypoint'), used = new Set(wps.map(e => e.name).filter(Boolean));
+  let n = 0;                                           // waypoints: own name, else WP1, WP2 ... (same as the back end)
+  wps.sort((a, b) => a.y - b.y || a.x - b.x).forEach(e => {
+    if (e.name) { out[e.id] = e.name; return; }
+    do n++; while (used.has('WP' + n));
+    out[e.id] = 'WP' + n;
   });
   return out;
 }
@@ -134,15 +144,31 @@ function bindTop() {
   };
   $('dzUndo').onclick = undo; $('dzRedo').onclick = redo;
   $('dzFit').onclick = () => { fit(); render(); };
+  $('dzSuggest').onclick = suggestTraffic;
   $('dzSave').onclick = () => save();
   $('dzRun').onclick = run;
+}
+
+async function suggestTraffic() {
+  const b = $('dzSuggest'); b.disabled = true;
+  try {
+    const r = await api.post('/api/designs/suggest-traffic', D.L);
+    if (r.elements.length) {
+      const add = r.elements.map(e => ({ ...e, id: newId() }));
+      change(() => { D.L.elements.push(...add); D.sel = new Set(add.map(e => e.id)); });
+      props(); toast(r.message + ' Ctrl+Z to undo.', true);
+    } else toast(r.message, true);
+  } catch (e) { /* api shows the error */ }
+  b.disabled = false;
 }
 
 // ------------------------------------------------------------------ left panel
 function buildTools() {
   const t = D.cat.elements;
   $('dzTools').innerHTML = `<button class="dz-tool wide on" data-t="select" title="Select, move and resize (V)"><i style="background:#93a8cc"></i>Select / move</button>`
-    + TOOL_ORDER.map(k => `<button class="dz-tool" data-t="${k}" title="${esc(t[k].hint)}"><i style="background:${t[k].color}"></i>${t[k].label}</button>`).join('');
+    + TOOL_ORDER.map(k => `<button class="dz-tool" data-t="${k}" title="${esc(t[k].hint)}"><i style="background:${t[k].color}"></i>${t[k].label}</button>`).join('')
+    + `<div class="dz-sub">Traffic rules</div>`
+    + TRAFFIC_ORDER.map(k => `<button class="dz-tool" data-t="${k}" title="${esc(t[k].hint)}"><i style="background:${t[k].color}"></i>${t[k].label}</button>`).join('');
   $('dzTools').onclick = e => { const b = e.target.closest('[data-t]'); if (b) setTool(b.dataset.t); };
 }
 function setTool(t) {
@@ -438,10 +464,11 @@ function render() {
   // problems -> outline colour per element
   const level = {};
   for (const p of (D.rep && D.rep.problems) || []) for (const id of p.ids) if (p.level === 'error' || (p.level === 'warning' && level[id] !== 'error')) level[id] = p.level;
-  const nm = names(), order = ['charging', 'packing', 'pallet_area', 'dock', 'nogo', 'rack', 'wall'];
+  const nm = names(), order = ['charging', 'packing', 'pallet_area', 'dock', 'slow', 'lane', 'single', 'nogo', 'rack', 'wall', 'waypoint'];
   const sorted = els().slice().sort((a, b) => order.indexOf(a.type) - order.indexOf(b.type));
   for (const e of sorted) {
     const t = D.cat.elements[e.type], gg = el('g', { class: 'dz-el', 'data-id': e.id }, g);
+    if (TRAFFIC.has(e.type)) { renderTraffic(gg, e, t, nm[e.id], s, level[e.id]); continue; }
     const solid = SOLID.has(e.type);
     el('rect', { x: e.x, y: e.y, width: e.w, height: e.h, fill: t.color, 'fill-opacity': e.type === 'rack' ? 0.85 : e.type === 'wall' ? 1 : e.type === 'nogo' ? 0.28 : 0.42,
       stroke: e.type === 'nogo' ? t.color : solid ? '#0b1736' : t.color, 'stroke-width': (e.type === 'nogo' ? 2 : 1) / s, 'stroke-dasharray': e.type === 'nogo' ? `${4 / s} ${3 / s}` : '' }, gg);
@@ -465,7 +492,7 @@ function render() {
   for (const id of D.sel) {
     const e = byId(id); if (!e) continue;
     el('rect', { x: e.x, y: e.y, width: e.w, height: e.h, fill: 'none', stroke: '#6cc4ff', 'stroke-width': 2 / s, 'pointer-events': 'none' }, g);
-    if (D.sel.size === 1) {
+    if (D.sel.size === 1 && e.type !== 'waypoint') {
       const hs = 9 / s;
       for (const [hx, hy, c] of [[0, 0, 'nw'], [1, 0, 'ne'], [0, 1, 'sw'], [1, 1, 'se'], [.5, 0, 'n'], [.5, 1, 's'], [0, .5, 'w'], [1, .5, 'e']]) {
         el('rect', { class: 'dz-handle', 'data-h': c, x: e.x + e.w * hx - hs / 2, y: e.y + e.h * hy - hs / 2, width: hs, height: hs, 'stroke-width': 1.5 / s,
@@ -486,6 +513,34 @@ function render() {
   for (let x = 0; x <= W; x += step) el('text', { x: ox + x * s, y: oy - 6, 'font-size': 10, fill: '#5f769f', 'text-anchor': 'middle' }, svg).textContent = x;
   for (let y = 0; y <= H; y += step) el('text', { x: ox - 6, y: oy + y * s + 3, 'font-size': 10, fill: '#5f769f', 'text-anchor': 'end' }, svg).textContent = y;
   el('text', { x: ox + W * s, y: oy + H * s + 16, 'font-size': 10.5, fill: '#93a8cc', 'text-anchor': 'end' }, svg).textContent = `${W} × ${H} m · 1 square = 1 m`;
+}
+
+function renderTraffic(gg, e, t, name, s, lvl) {
+  const c = t.color, cx = e.x + e.w / 2, cy = e.y + e.h / 2;
+  if (e.type === 'waypoint') {
+    el('rect', { x: e.x, y: e.y, width: 1, height: 1, fill: 'transparent' }, gg);             // easy to click
+    el('path', { d: `M${cx} ${e.y + 0.08}L${e.x + 0.92} ${cy}L${cx} ${e.y + 0.92}L${e.x + 0.08} ${cy}Z`, fill: c, stroke: '#041225', 'stroke-width': 1.2 / s }, gg);
+    if (s >= 4) el('text', { x: cx, y: e.y - 0.25, 'font-size': Math.max(0.7, 10 / s), fill: c, 'text-anchor': 'middle', 'font-weight': 700,
+      stroke: '#041225', 'stroke-width': 3 / s, 'paint-order': 'stroke' }, gg).textContent = name;
+  } else if (e.type === 'lane') {
+    el('rect', { x: e.x, y: e.y, width: e.w, height: e.h, fill: c, 'fill-opacity': 0.18, stroke: c, 'stroke-width': 1.5 / s, 'stroke-dasharray': `${6 / s} ${4 / s}` }, gg);
+    const [dx, dy] = { E: [1, 0], W: [-1, 0], S: [0, 1], N: [0, -1] }[e.dir || 'E'], along = dx ? e.w : e.h, across = dx ? e.h : e.w;
+    const k = Math.min(0.42, across * 0.35), p = [];          // chevrons every 2 m, centred across the lane
+    for (let i = 1; i < along; i += 2) for (let j = 0; j < across; j++) {
+      const ax = dx ? e.x + i : e.x + j + 0.5, ay = dx ? e.y + j + 0.5 : e.y + i;
+      const tx = ax + dx * k, ty = ay + dy * k, bx = ax - dx * k, by = ay - dy * k;
+      p.push(`M${bx + dy * k} ${by + dx * k}L${tx} ${ty}L${bx - dy * k} ${by - dx * k}`);
+    }
+    el('path', { d: p.join(''), fill: 'none', stroke: c, 'stroke-width': Math.max(0.09, 2 / s), 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }, gg);
+  } else {
+    const single = e.type === 'single';
+    el('rect', { x: e.x, y: e.y, width: e.w, height: e.h, fill: c, 'fill-opacity': single ? 0.16 : 0.1, stroke: c, 'stroke-width': (single ? 2 : 1.5) / s,
+      'stroke-dasharray': single ? '' : `${3 / s} ${3 / s}` }, gg);
+    const lab = single ? (e.name || '1 robot') : `≤ ${e.max_speed ?? 0.5} m/s`;
+    const fs = Math.min(1, e.w * 0.9 / Math.max(1, lab.length * 0.6), e.h * 0.6);
+    if (fs * s >= 7) el('text', { x: cx, y: cy, 'font-size': fs, fill: c, 'text-anchor': 'middle', 'dominant-baseline': 'central', 'font-weight': 700 }, gg).textContent = lab;
+  }
+  if (lvl) el('rect', { x: e.x - 0.15, y: e.y - 0.15, width: e.w + 0.3, height: e.h + 0.3, fill: 'none', stroke: lvl === 'error' ? '#ff5d6c' : '#f5a524', 'stroke-width': 2 / s, 'stroke-dasharray': `${5 / s} ${3 / s}` }, gg);
 }
 
 // ------------------------------------------------------------------ canvas: interaction
@@ -554,8 +609,11 @@ function bindCanvas() {
       let r = d.moved ? d.rect : { x: d.x0 - Math.floor(t.default[0] / 2), y: d.y0 - Math.floor(t.default[1] / 2), w: t.default[0], h: t.default[1] };
       r = { ...r, w: Math.min(r.w, D.L.width_m), h: Math.min(r.h, D.L.height_m) };
       r.x = Math.max(0, Math.min(D.L.width_m - r.w, r.x)); r.y = Math.max(0, Math.min(D.L.height_m - r.h, r.y));
+      if (d.type === 'waypoint') r = { x: Math.max(0, Math.min(D.L.width_m - 1, Math.floor(d.x0))), y: Math.max(0, Math.min(D.L.height_m - 1, Math.floor(d.y0))), w: 1, h: 1 };
       const e = { id: newId(), type: d.type, ...r };
       if (d.type === 'rack') e.levels = 4;
+      if (d.type === 'lane') e.dir = r.w >= r.h ? 'E' : 'S';
+      if (d.type === 'slow') e.max_speed = 0.5;
       change(() => { els().push(e); D.sel = new Set([e.id]); });
       if (!eventShift) setTool('select');
       return;
@@ -623,7 +681,14 @@ function duplicate() {
 }
 function rotate() {
   if (!D.sel.size) return;
-  change(() => { for (const id of D.sel) { const e = byId(id), cx = e.x + e.w / 2, cy = e.y + e.h / 2; [e.w, e.h] = [e.h, e.w]; e.x = Math.round(cx - e.w / 2); e.y = Math.round(cy - e.h / 2); } });
+  change(() => {
+    for (const id of D.sel) {
+      const e = byId(id), cx = e.x + e.w / 2, cy = e.y + e.h / 2;
+      if (e.type === 'lane') e.dir = TURN[e.dir || 'E'];                      // the arrow turns with the lane
+      if (e.w === e.h) continue;
+      [e.w, e.h] = [e.h, e.w]; e.x = Math.round(cx - e.w / 2); e.y = Math.round(cy - e.h / 2);
+    }
+  });
 }
 
 // ------------------------------------------------------------------ right panel
@@ -647,11 +712,14 @@ function props() {
       <button class="btn sm" id="pRot">Rotate (R)</button><button class="btn sm" id="pDup">Duplicate</button><button class="btn sm danger" id="pDel">Delete</button></div>`;
   } else {
     const e = byId([...D.sel][0]), t = D.cat.elements[e.type], nm = names()[e.id];
-    $('dzPropTitle').textContent = t.label + (e.type === 'rack' || !SOLID.has(e.type) ? ' · ' + nm : '');
+    $('dzPropTitle').textContent = t.label + ((e.type === 'rack' || !SOLID.has(e.type)) && !['lane', 'slow'].includes(e.type) ? ' · ' + nm : '');
     const f = (id, lab, v, extra = '') => `<div class="field"><label>${lab}</label><input id="${id}" type="number" value="${v}" ${extra}></div>`;
     box.innerHTML = `<p class="hint" style="margin-bottom:8px">${esc(t.hint)}</p><div class="dz-props">
-      ${e.type === 'rack' || e.type === 'nogo' ? `<div class="field full"><label>Name</label><input id="pN" value="${esc(e.name || '')}" placeholder="${esc(e.type === 'rack' ? nm : 'No-go')}"></div>` : ''}
-      ${f('pX', 'X (m)', e.x)}${f('pY', 'Y (m)', e.y)}${f('pWd', 'Width (m)', e.w, 'min="1"')}${f('pHt', 'Length (m)', e.h, 'min="1"')}
+      ${['rack', 'nogo', 'single', 'waypoint'].includes(e.type) ? `<div class="field full"><label>Name</label><input id="pN" value="${esc(e.name || '')}" placeholder="${esc(e.type === 'nogo' ? 'No-go' : e.type === 'single' ? '1 robot' : nm)}"></div>` : ''}
+      ${e.type === 'lane' ? `<div class="field full"><label>Direction</label><select id="pDir">${(e.w > e.h ? ['E', 'W'] : e.h > e.w ? ['S', 'N'] : ['E', 'W', 'S', 'N'])
+        .map(d => `<option value="${d}" ${d === e.dir ? 'selected' : ''}>${ARROW[d]} ${{ E: 'East', W: 'West', S: 'South', N: 'North' }[d]}</option>`).join('')}</select></div>` : ''}
+      ${e.type === 'slow' ? `<div class="field full"><label>Max speed (m/s)</label><input id="pSp" type="number" min="0.1" max="3" step="0.1" value="${e.max_speed ?? 0.5}"></div>` : ''}
+      ${f('pX', 'X (m)', e.x)}${f('pY', 'Y (m)', e.y)}${e.type === 'waypoint' ? '' : f('pWd', 'Width (m)', e.w, 'min="1"') + f('pHt', 'Length (m)', e.h, 'min="1"')}
       ${e.type === 'rack' ? f('pL', 'Levels', e.levels || 4, 'min="1" max="8"') + `<div class="field"><label>Bays</label><input disabled value="${Math.max(e.w, e.h)}"></div>` : ''}
       ${e.type === 'charging' ? f('pB', 'Charger bays', e.bays || '', 'min="1" max="60" placeholder="auto"') : ''}
       </div><div class="dz-acts"><button class="btn sm" id="pRot">Rotate (R)</button><button class="btn sm" id="pDup">Duplicate</button><button class="btn sm danger" id="pDel">Delete</button></div>`;
@@ -659,6 +727,8 @@ function props() {
     num('pX', 'x'); num('pY', 'y'); num('pWd', 'w', 1, 500); num('pHt', 'h', 1, 500); num('pL', 'levels', 1, 8);
     if ($('pB')) $('pB').onchange = ev => change(() => { const v = Math.round(+ev.target.value || 0); if (v > 0) e.bays = Math.min(60, v); else delete e.bays; });
     if ($('pN')) $('pN').onchange = ev => change(() => { const v = ev.target.value.trim(); if (v) e.name = v.slice(0, 24); else delete e.name; });
+    if ($('pDir')) $('pDir').onchange = ev => change(() => { e.dir = ev.target.value; });
+    if ($('pSp')) $('pSp').onchange = ev => change(() => { e.max_speed = Math.max(0.1, Math.min(3, Math.round((+ev.target.value || 0.5) * 10) / 10)); });
   }
   $('pRot').onclick = rotate; $('pDup').onclick = duplicate; $('pDel').onclick = remove;
 }

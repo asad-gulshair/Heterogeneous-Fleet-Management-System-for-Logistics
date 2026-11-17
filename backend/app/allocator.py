@@ -9,6 +9,8 @@ import numpy as np
 from scipy.optimize import linear_sum_assignment
 
 AGING = 0.5      # seconds of cost removed per second a task has waited (stops starvation)
+PRIORITY_S = 300 # one priority level is worth 5 minutes of waiting (urgent jumps the queue, low waits)
+BLOCKED = 1e9    # robot may not do this order (mission or WMS order asks for another robot)
 WINDOW = 60      # Hungarian looks at the oldest N queued tasks per round
 
 
@@ -26,7 +28,7 @@ class Greedy:
         for t in tasks:
             pick, taken = {}, set()
             for role in t.plans:
-                cands = [r for r in avail if role in r.capabilities and r.id not in taken]
+                cands = [r for r in avail if role in r.capabilities and r.id not in taken and t.allows(role, r)]
                 if not cands:
                     break
                 best = min(cands, key=lambda r: travel(r, t, role))
@@ -54,9 +56,12 @@ class Hungarian:
             dem = [t for t in tasks if cap in t.plans]
             if not robs or not dem:
                 continue
-            cost = np.array([[travel(r, t, cap) - AGING * (now - t.created) for r in robs] for t in dem])
+            cost = np.array([[travel(r, t, cap) - AGING * (now - t.created) - PRIORITY_S * (t.priority - 1)
+                              + (0.0 if t.allows(cap, r) else BLOCKED) for r in robs] for t in dem])
             rows, cols = linear_sum_assignment(cost)   # rectangular matrices are fine
             for i, j in zip(rows, cols):
+                if cost[i, j] >= BLOCKED / 2:
+                    continue
                 picks[dem[i].id][cap] = robs[j].id
                 used.add(robs[j].id)
         # keep only tasks where every role found a robot

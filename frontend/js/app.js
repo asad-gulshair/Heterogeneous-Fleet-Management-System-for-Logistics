@@ -1,6 +1,7 @@
 // TusCore Fleet Console - core: live connection, header, KPIs, twin views, side panels, page routing.
 import { Plan2D } from './plan2d.js';
 import { initPages, showPage } from './pages.js';
+import { ensureLogin, showLogin, initAuthUi, initStep2, alarmsSnap } from './step2.js';
 
 export const $ = id => document.getElementById(id);
 // Small notice in the corner - used for errors (and confirmations) so nothing fails silently.
@@ -10,20 +11,24 @@ export function toast(msg, ok = false) {
   clearTimeout(toast._h); toast._h = setTimeout(() => { t.style.display = 'none'; }, 4000);
 }
 async function failText(r) { try { const j = await r.json(); return typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail); } catch { return r.statusText; } }
+function authFail(r) {                                  // session ended -> log in again; operator hit an admin action -> say so
+  if (r.status === 401) showLogin('Your session has ended. Please log in again.');
+  if (r.status === 403) toast('Only an admin can do this.');
+}
 export const api = {
-  get: async u => { const r = await fetch(u); if (!r.ok) throw new Error(`${u}: ${r.status}`); return r.json(); },
+  get: async u => { const r = await fetch(u); if (!r.ok) { authFail(r); throw new Error(`${u}: ${r.status}`); } return r.json(); },
   post: async (u, b = {}) => {
     const r = await fetch(u, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) });
-    if (!r.ok) { const m = await failText(r); toast('Not possible: ' + m); throw new Error(m); }
+    if (!r.ok) { if (r.status === 401 || r.status === 403) { authFail(r); throw new Error(String(r.status)); } const m = await failText(r); toast('Not possible: ' + m); throw new Error(m); }
     return r.json();
   },
 };
-const PAGES = ['layout', 'ops', 'overview', 'analytics', 'compare', 'whatif', 'integration'];
+const PAGES = ['layout', 'ops', 'overview', 'missions', 'replay', 'analytics', 'compare', 'whatif', 'integration'];
 export const S = { MAP: null, SNAP: null, sel: null, tab: 'robots', view: '3d', twin: null, plan: null, page: 'ops', listeners: [] };
 export const fmtT = t => { t = Math.floor(t); return [t / 3600, t % 3600 / 60, t % 60].map(v => String(Math.floor(v)).padStart(2, '0')).join(':'); };
 export const fmtDur = x => { x = Math.round(x || 0); return x < 60 ? x + 's' : x < 3600 ? Math.floor(x / 60) + 'm ' + String(x % 60).padStart(2, '0') + 's' : (x / 3600).toFixed(1) + 'h'; };
-export const KC = { box_pick: '#2E9FE8', high_pick: '#f5a524', pallet_move: '#e5484d', inventory_scan: '#46a758' };
-export const KN = { box_pick: 'Box pick', high_pick: 'High-shelf pick (lift + tote)', pallet_move: 'Pallet move', inventory_scan: 'Inventory scan' };
+export const KC = { box_pick: '#2E9FE8', high_pick: '#f5a524', pallet_move: '#e5484d', inventory_scan: '#46a758', mission: '#a78bfa', transport: '#38bdf8' };
+export const KN = { box_pick: 'Box pick', high_pick: 'High-shelf pick (lift + tote)', pallet_move: 'Pallet move', inventory_scan: 'Inventory scan', mission: 'Mission', transport: 'Transport' };
 const batColor = b => b > 40 ? '#3ddc97' : b > 20 ? '#f5a524' : '#ff5d6c';
 const GLYPH = {
   tote_amr: '<svg width="16" height="16" viewBox="0 0 16 16"><rect x="3" y="5" width="10" height="7" rx="1.5" fill="none" stroke="#fff" stroke-width="1.5"/><path d="M3 8h10" stroke="#fff"/></svg>',
@@ -36,10 +41,12 @@ const nice = id => id.replace(/_/g, ' ');
 
 // ------------------------------------------------------------------ boot
 async function init() {
+  initAuthUi();
+  await ensureLogin();
   await loadMap();
   connect();
   bindHeader(); bindPanel();
-  initPages();
+  initPages(); initStep2();
   window.addEventListener('hashchange', route); route();
   window.addEventListener('tuscore:layout', async () => { S.sel = null; await loadMap(); });   // designer started a shift on a new layout
 }
@@ -83,8 +90,20 @@ function applyView() {
 function connect() {
   const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
   ws.onopen = () => $('live').classList.add('live');
-  ws.onclose = () => { $('live').classList.remove('live'); $('livetxt').textContent = 'Reconnecting'; setTimeout(connect, 1000); };
-  ws.onmessage = e => { S.SNAP = JSON.parse(e.data); onSnap(); };
+  ws.onclose = async e => {
+    $('live').classList.remove('live'); $('livetxt').textContent = 'Reconnecting';
+    if (e.code === 4401) await showLogin('Please log in.');
+    setTimeout(connect, 1000);
+  };
+  ws.onmessage = e => {
+    const snap = JSON.parse(e.data);
+    // a shift on another layout started and the map has not arrived yet: skip frames until it has
+    if (!S.MAP || (snap.robots || []).some(r => !S.MAP.types[r.type])) {
+      if (S.MAP && !S.mapLoading) { S.mapLoading = true; loadMap().finally(() => { S.mapLoading = false; }); }
+      return;
+    }
+    S.SNAP = snap; onSnap();
+  };
 }
 
 function route() {
@@ -98,6 +117,7 @@ function route() {
 // ------------------------------------------------------------------ live snapshot
 function onSnap() {
   const D = S.SNAP, R = D.robots, k = D.kpis, n = R.length, on = R.filter(r => r.state !== 'fault').length;
+  alarmsSnap(D);
   if (D.site !== S.MAP.name || D.mode !== S.MAP.mode) { S.MAP.name = D.site; if (D.mode !== S.MAP.mode) { S.MAP.mode = D.mode; } }
   $('clock').textContent = fmtT(D.t);
   $('shiftlbl').textContent = 'Shift ' + Math.min(100, Math.round(D.t / D.shift * 100)) + '%';
@@ -115,7 +135,7 @@ function onSnap() {
   $('k_done').innerHTML = `${k.completed}<small>/ ${k.created}</small>`;
   $('k_donesub').textContent = `${k.on_time_pct}% on time · ${k.queued} queued · ${k.active} active`;
   $('k_oph').innerHTML = `${k.orders_per_hour}<small>orders/h</small>`;
-  $('k_ophsub').textContent = `Box ${k.by_kind.box_pick} · High ${k.by_kind.high_pick} · Pallet ${k.by_kind.pallet_move} · Scan ${k.by_kind.inventory_scan}`;
+  $('k_ophsub').textContent = `Box ${k.by_kind.box_pick} · High ${k.by_kind.high_pick} · Pallet ${k.by_kind.pallet_move} · Scan ${k.by_kind.inventory_scan}` + (k.by_kind.mission ? ` · Mission ${k.by_kind.mission}` : '') + (k.by_kind.transport ? ` · Move ${k.by_kind.transport}` : '');
   $('k_wait').innerHTML = `${Math.round(k.avg_wait)}<small>s</small>`;
   $('k_waitsub').textContent = 'avg cycle ' + fmtDur(k.avg_cycle);
   $('k_util').innerHTML = `${Math.round(k.utilization)}<small>%</small>`;
@@ -301,16 +321,17 @@ function renderTasks() {
     const maxBay = Math.max(...S.MAP.shelves.map(s => s.w));
     P.innerHTML = `<div class="tsum" id="tsum"></div>
     <form class="oform" id="oform">
-      <div class="full"><label>New order</label><select id="o_kind">${S.MAP.kinds.map(k => `<option value="${k}">${KN[k]}</option>`).join('')}</select></div>
+      <div class="full"><label>New order</label><select id="o_kind">${S.MAP.kinds.filter(k => KN[k]).map(k => `<option value="${k}">${KN[k]}</option>`).join('')}</select></div>
       <div><label>Shelf row</label><select id="o_row"><option value="">Random</option>${rows}</select></div>
       <div><label>Bay (1-${maxBay})</label><input id="o_bay" type="number" min="1" max="${maxBay}" placeholder="Random"></div>
+      <div class="full"><label>Priority</label><select id="o_prio"><option value="0">Low</option><option value="1" selected>Normal</option><option value="2">High</option><option value="3">Urgent</option></select></div>
       <div class="full"><button class="btn primary" style="width:100%" type="submit">Submit order</button></div>
     </form><div id="tlist"></div>`;
     const sync = () => { const k = $('o_kind').value; $('o_row').disabled = k === 'pallet_move'; $('o_bay').disabled = !(k === 'box_pick' || k === 'high_pick'); };
     $('o_kind').onchange = sync; sync();
     $('oform').onsubmit = async e => {
       e.preventDefault(); const row = $('o_row').value, bay = $('o_bay').value;
-      await api.post('/api/orders', { kind: $('o_kind').value, row: row === '' || $('o_row').disabled ? null : +row, bay: bay === '' || $('o_bay').disabled ? null : +bay - 1 });
+      await api.post('/api/orders', { kind: $('o_kind').value, row: row === '' || $('o_row').disabled ? null : +row, bay: bay === '' || $('o_bay').disabled ? null : +bay - 1, priority: +$('o_prio').value });
     };
   }
   updateTasks();
@@ -326,7 +347,7 @@ function updateTasks() {
     const who = Object.values(t.robots).map(nice).join(' + ');
     const meta = t.status === 'queued' ? 'waiting ' + fmtDur(t.wait) : t.status === 'done' ? `done in ${fmtDur(t.cycle)} · ${who}` : who;
     return `<div class="trow"><span class="kd" style="background:${KC[t.kind]}"></span>
-      <div style="min-width:0"><div class="nm">#${t.id} ${t.title}${t.manual ? ' <span class="badge">MANUAL</span>' : ''}${t.reassigned ? ' <span class="badge" style="color:var(--warn)">REASSIGNED</span>' : ''}${t.mismatch && t.status === 'done' ? ' <span class="badge" style="color:var(--warn)">MISMATCH</span>' : ''}</div><div class="meta">${meta}</div></div>
+      <div style="min-width:0"><div class="nm">#${t.id} ${t.title}${t.manual ? ' <span class="badge">MANUAL</span>' : ''}${t.source === 'wms' || t.source === 'mock_wms' ? ' <span class="badge" style="color:var(--cyan2)">WMS</span>' : ''}${t.source === 'mission' ? ' <span class="badge" style="color:#c4b5fd">MISSION</span>' : ''}${t.priority >= 2 ? ` <span class="badge" style="color:${t.priority === 3 ? 'var(--bad)' : 'var(--warn)'}">${t.priority === 3 ? 'URGENT' : 'HIGH'}</span>` : ''}${t.reassigned ? ' <span class="badge" style="color:var(--warn)">REASSIGNED</span>' : ''}${t.mismatch && t.status === 'done' ? ' <span class="badge" style="color:var(--warn)">MISMATCH</span>' : ''}</div><div class="meta">${meta}</div></div>
       <div style="margin-left:auto;text-align:right;min-width:70px"><span class="chip ${t.status}">${label[t.status]}</span><div class="bar"><i style="width:${t.progress * 100}%"></i></div></div></div>`;
   }).join('') || '<div class="empty"><b>No orders yet</b>Orders arrive automatically during the shift, or submit one above.</div>';
 }

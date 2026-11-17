@@ -21,12 +21,17 @@
     <div class="clock mono"><small id="shiftlbl">Shift 0%</small><span id="clock">00:00:00</span></div>
     <div class="seg" id="speed"><button data-s="1">1×</button><button data-s="10">10×</button><button data-s="60">60×</button><button data-s="300">300×</button></div>
     <span class="pill" id="live"><span class="d"></span><span id="livetxt">Connecting</span></span>
+    <button class="alarmbtn" id="alarmBtn" title="Alarms"><svg viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg><b id="alarmN">0</b></button>
+    <div class="usermenu" id="userMenu" hidden><button class="userbtn" id="userBtn"><i id="userIcon">A</i><span><b id="userName">admin</b><small id="userRole">admin</small></span></button>
+      <div class="umenu" id="umenu" hidden><button data-u="password">Change password</button><button data-u="users" data-admin>Users and audit log</button><button data-u="logout">Log out</button></div></div>
   </header>
 
   <nav id="nav">
     <button data-p="layout" title="Layout designer"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 9v12M14 13h4M14 17h4"/></svg>Layout</button>
     <button data-p="ops" class="on" title="Live operations"><svg viewBox="0 0 24 24"><path d="M3 21V9l9-6 9 6v12"/><path d="M8 21v-6h8v6"/><path d="M3 9h18"/></svg>Live</button>
     <button data-p="overview" title="Fleet overview"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>Overview<i class="navbadge" id="navAlerts"></i></button>
+    <button data-p="missions" title="Missions"><svg viewBox="0 0 24 24"><circle cx="5" cy="18" r="2"/><circle cx="19" cy="6" r="2"/><path d="M7 18h6a3 3 0 0 0 0-6h-2a3 3 0 0 1 0-6h6"/></svg>Missions</button>
+    <button data-p="replay" title="Shift history and replay"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><path d="M12 8v4l3 2"/></svg>History</button>
     <button data-p="analytics" title="Analytics"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>Analytics</button>
     <button data-p="compare" title="Scenario comparison"><svg viewBox="0 0 24 24"><path d="M7 4v16M17 4v16M3 8h8M13 14h8"/><circle cx="7" cy="8" r="2"/><circle cx="17" cy="14" r="2"/></svg>Compare</button>
     <button data-p="whatif" title="What-if and ROI"><svg viewBox="0 0 24 24"><path d="M12 2v4M12 18v4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M2 12h4M18 12h4"/><circle cx="12" cy="12" r="4"/></svg>What-if</button>
@@ -45,6 +50,7 @@
         <button class="btn sm" id="dzRedo" title="Redo (Ctrl+Y)">Redo</button>
         <span class="dz-sep"></span>
         <button class="btn sm" id="dzFit" title="Fit the floor to the screen (F)">Fit</button>
+        <button class="btn sm" id="dzSuggest" title="Traffic assistant: one-way lanes for 1 m aisles (neighbours in opposite directions) and one-robot zones for doors">Suggest traffic</button>
         <span class="spacer"></span>
         <select id="dzVersions" title="Version history"></select>
         <button class="btn sm" id="dzSave" title="Save a new version (Ctrl+S)">Save</button>
@@ -241,8 +247,57 @@
     </section>
 
     <!-- ================= INTEGRATION ================= -->
+    <section class="page" id="p-missions">
+      <div class="ms">
+        <div class="card"><div class="hd"><h2>Missions</h2><span class="hint" id="msMeta"></span></div><div class="bd" id="msList"></div></div>
+        <div class="card"><div class="hd"><h2>New mission</h2><span class="spacer"></span><select id="msTpl" class="sm"><option value="">Start from…</option></select></div>
+          <div class="bd ms-form">
+            <div class="field full"><label>Name</label><input id="msName" maxlength="60" placeholder="e.g. Replenish packing 1"></div>
+            <div class="field full"><label>Robot</label><select id="msRobot"></select></div>
+            <div class="field"><label>Priority</label><select id="msPrio"><option value="low">Low</option><option value="normal" selected>Normal</option><option value="high">High</option><option value="urgent">Urgent</option></select></div>
+            <div class="field"><label>Runs (0 = until stopped)</label><input id="msRepeat" type="number" min="0" max="10000" value="1"></div>
+            <div class="field full"><label>Minutes between run starts</label><input id="msEvery" type="number" min="0" max="1440" step="1" value="0"></div>
+            <div class="field full"><label>Steps</label><div id="msSteps"></div><button class="btn sm" id="msAddStep">+ Step</button></div>
+            <datalist id="msTargets"></datalist>
+            <p class="hint full">A step goes <b>to</b> a waypoint (drawn in Layout), a zone (packing_1, dock, charging), a rack bay (A3-05) or x,y and <b>does</b> something there. Each run is one fleet order: it gets a robot by priority, follows the traffic rules and is re-assigned if the robot fails.</p>
+            <div class="full ms-acts"><span class="spacer"></span><button class="btn primary" id="msCreate">Create and start</button></div>
+          </div></div>
+      </div>
+    </section>
+
+    <section class="page" id="p-replay">
+      <div class="rp">
+        <div class="card"><div class="hd"><h2>Recorded shifts</h2><span class="hint">every shift is stored in the database</span></div><div class="bd" style="overflow:auto"><table class="data" id="rpShifts"></table></div></div>
+        <div class="card rp-view"><div class="hd"><h2 id="rpTitle">Replay</h2><span class="hint" id="rpMeta"></span><span class="spacer"></span>
+            <div class="seg" id="rpTabs"><button data-r="events" class="on">Events</button><button data-r="alarms">Alarms</button><button data-r="orders">Orders</button></div></div>
+          <div class="rp-body">
+            <div class="rp-map"><div id="rpPlan" class="plan2d" style="display:flex"><canvas id="rpCanvas"></canvas></div><div class="rp-empty" id="rpEmpty">Pick a shift on the left to replay it.</div></div>
+            <div class="rp-side" id="rpSide"></div>
+          </div>
+          <div class="rp-ctl"><button class="btn sm" id="rpPlay">Play</button><select id="rpSpeed" class="sm"><option value="1">1×</option><option value="10" selected>10×</option><option value="60">60×</option><option value="300">300×</option></select>
+            <input type="range" id="rpTime" min="0" max="0" step="1" value="0"><span class="mono" id="rpClock">00:00:00</span></div>
+        </div>
+      </div>
+    </section>
+
     <section class="page" id="p-integration">
-      <div class="two">
+      <div class="card wms"><div class="hd"><h2>WMS connection</h2><span class="hint" id="wmsMeta"></span><span class="spacer"></span>
+          <label class="dz-check" data-admin>Mock WMS <input type="checkbox" id="wmsMock"></label>
+          <select id="wmsWave" class="sm" data-admin title="A wave of orders every…"><option value="2">waves every 2 min</option><option value="5" selected>waves every 5 min</option><option value="15">waves every 15 min</option></select></div>
+        <div class="bd wms-grid">
+          <div><div class="wms-stats" id="wmsStats"></div>
+            <div class="kv" data-admin><b>API key</b><span class="mono" id="wmsKey">••••••</span><button class="btn sm" id="wmsShow">Show</button><button class="btn sm" id="wmsRotate">New key</button></div>
+            <div class="kv" data-admin><b>Webhooks</b><span id="wmsHooks" class="hint">none</span></div>
+            <div class="row" data-admin><input id="wmsHook" placeholder="https://wms.example.com/tuscore-status"><button class="btn sm" id="wmsHookAdd">Add</button></div>
+<pre class="code">curl -X POST http://localhost:8000/api/wms/orders \
+  -H "X-API-Key: &lt;key&gt;" -H "Content-Type: application/json" \
+  -d '{"ref": "SO-1001-1", "type": "box_pick",
+       "location": "A3-05", "priority": "high"}'
+# status: GET /api/wms/orders/SO-1001-1
+# all changes: GET /api/wms/events?after=0</pre></div>
+          <div style="overflow:auto;max-height:330px"><table class="data" id="wmsOrders"></table></div>
+        </div></div>
+      <div class="two" style="margin-top:14px">
         <div class="card"><div class="hd"><h2>REST API</h2><span class="spacer"></span><a class="btn primary" href="/docs" target="_blank">Open interactive docs</a></div><div class="bd" id="apiList"></div></div>
         <div>
           <div class="card"><div class="hd"><h2>Connectivity</h2></div><div class="bd" id="conn"></div></div>
@@ -266,6 +321,23 @@
   <footer><span>TusCore Fleet Console · v2.0 (in development) · simulated digital twin</span><span class="pw"><img src="assets/tusmec-mark.svg" alt="">Powered by <b>Tusmec</b></span></footer>
 </div>
 <div class="toast" id="toast"></div>
+<div class="alarmdrawer" id="alarmDrawer" hidden><div class="hd"><h2>Alarms</h2><span class="hint" id="alarmSum"></span><span class="spacer"></span><button class="btn sm" id="alarmAckAll">Acknowledge all</button><button class="btn sm" id="alarmClose">Close</button></div><div class="bd" id="alarmList"></div>
+  <div class="ft"><a href="#replay" id="alarmHist">Alarm history</a></div></div>
+<div class="login" id="login" hidden><form class="card" id="loginForm"><img src="assets/tuscore-mark.svg" alt=""><h1>Tus<i>Core</i> Fleet Console</h1>
+  <div class="field full"><label>User name</label><input id="lgUser" autocomplete="username" required></div>
+  <div class="field full"><label>Password</label><input id="lgPw" type="password" autocomplete="current-password" required></div>
+  <p class="err" id="lgErr"></p><button class="btn primary" type="submit">Log in</button>
+  <p class="hint">First start: admin / admin and operator / operator. You will be asked to choose a new password.</p></form></div>
+<dialog class="dz-dlg" id="pwDlg"><form method="dialog" id="pwForm"><h3>Change password</h3><p class="hint" id="pwWhy"></p>
+  <div class="dz-props"><div class="field full"><label>Current password</label><input name="old" type="password" autocomplete="current-password" required></div>
+  <div class="field full"><label>New password (8+ characters)</label><input name="new" type="password" minlength="8" autocomplete="new-password" required></div>
+  <div class="field full"><label>New password again</label><input name="new2" type="password" minlength="8" autocomplete="new-password" required></div></div>
+  <p class="err" id="pwErr"></p><div class="dz-acts"><span class="spacer"></span><button class="btn sm" value="cancel" formnovalidate id="pwCancel">Cancel</button><button class="btn sm primary" value="ok">Change</button></div></form></dialog>
+<dialog class="dz-dlg wide" id="usersDlg"><div><h3>Users</h3><table class="data" id="usersTbl"></table>
+  <form class="row" id="userAdd"><input name="username" placeholder="user name" required><input name="password" type="password" placeholder="first password (8+)" minlength="8" required>
+    <select name="role"><option value="operator">operator</option><option value="admin">admin</option></select><button class="btn sm primary">Add user</button></form>
+  <h3 style="margin-top:14px">Audit log</h3><div class="audit" id="auditLog"></div>
+  <div class="dz-acts"><span class="spacer"></span><button class="btn sm" id="usersClose">Close</button></div></div></dialog>
 <script type="module" src="js/app.js"></script>
 </body>
 </html>
